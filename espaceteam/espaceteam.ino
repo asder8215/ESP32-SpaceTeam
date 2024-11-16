@@ -264,6 +264,9 @@ void drawRoom() {
 
   int currentLeftState = digitalRead(BUTTON_LEFT);
 
+  // Detect left button press
+  // Short Press: Change number by incrementation (0-9, wraparound)
+  // Long Press: Go back to name screen
   if (lastLeftState == HIGH && currentLeftState == LOW)       // button is pressed
     pressedTime = millis();
   else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
@@ -271,15 +274,15 @@ void drawRoom() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-      // ledcWrite(0, 0);
-      // digitalWrite(MOTOR_PIN, LOW);
       room[curr_highlight] = (room[curr_highlight] + 1) % 10;
       Serial.println("A short press is detected");
     }
 
     if ( pressDuration > LONG_PRESS_TIME ){
-      // don't do any action
+      tft.fillScreen(TFT_BLACK);
       Serial.println("A long press is detected");
+      nameScreen = true;
+      roomScreen = false;
     }
   }
 
@@ -287,6 +290,9 @@ void drawRoom() {
 
   int currentRightState = digitalRead(BUTTON_RIGHT);
 
+  // Detect right button press
+  // Short Press: Change character position to change 
+  // Long Press: Go forward to team screen
   if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
     pressedTime = millis();
   else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
@@ -294,20 +300,20 @@ void drawRoom() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-      // ledcWrite(0, 0);
-      // digitalWrite(MOTOR_PIN, LOW);
       curr_highlight = (curr_highlight + 1) % 4;
       Serial.println("A short press is detected");
     }
 
     if ( pressDuration > LONG_PRESS_TIME ){
-      // don't do any action
       Serial.println("A long press is detected");
+      tft.fillScreen(TFT_BLACK);
+      roomScreen = false;
+      teamScreen = true;
     }
   }
   lastRightState = currentRightState;
 
-  // tft.setCursor(10 + curr_underscore_ind * 20, tft.height()/2 + 10, 2);
+  // Room Screen UI
   for (int i = 0; i < 4; i++) {
     if (i == curr_highlight) {
       tft.setTextColor(TFT_RED, TFT_BLACK);
@@ -318,7 +324,6 @@ void drawRoom() {
     tft.drawChar(char(room[i] + '0'), 30 + i * 20, tft.height()/2, 2);
   }
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  // tft.drawString("", 30 + curr_underscore_ind * 20, tft.height()/2 + 20, 2);
 
 }
 
