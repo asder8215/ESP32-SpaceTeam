@@ -244,7 +244,7 @@ void setup() {
   espnowSetup();
   timerSetup();
 
-  drawNameEntryScreen(); 
+  // drawNameEntryScreen(); 
 }
 
 String genCommand() {
@@ -266,18 +266,19 @@ void drawControls() {
 }
 
 void drawNameEntryScreen() {
-  tft.fillScreen(TFT_BLACK);
+  // tft.fillScreen(TFT_BLACK);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Enter Name:", 10, 30, 1);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.drawString("Enter", tft.width()/4+7, 30, 2);
+  tft.drawString("Name", tft.width()/4+7, 70, 2);
 
   for (int i = 0; i < 3; i++) {
     if (i == currentLetterIndex) {
       tft.setTextColor(TFT_RED, TFT_BLACK);
     } else {
-      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
     }
-    tft.drawChar(selectedLetters[i], 40 + i * 30, 70, 2);
+    tft.drawChar(selectedLetters[i], 35 + i * 30, 130, 2);
   }
 }
 
@@ -295,8 +296,6 @@ void handleNameEntry() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-      // ledcWrite(0, 0);
-      // digitalWrite(MOTOR_PIN, LOW);
         selectedLetters[currentLetterIndex]++;
         if (selectedLetters[currentLetterIndex] > 'Z') {
             selectedLetters[currentLetterIndex] = 'A';
@@ -320,8 +319,6 @@ void handleNameEntry() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-      // ledcWrite(0, 0);
-      // digitalWrite(MOTOR_PIN, LOW);
         if (currentLetterIndex < 2){
           currentLetterIndex++; // move to next digit
         }
@@ -344,13 +341,17 @@ void handleNameEntry() {
   lastRightState = currentRightState;   
     
 
-    // update the userName and redraw if name or current letter index changes
-    String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
-    if (newName != lastName || currentLetterIndex != lastLetterIndex) {
-        drawNameEntryScreen();
-        lastName = newName;
-        lastLetterIndex = currentLetterIndex;
-    }
+  // update the userName and redraw if name or current letter index changes
+  String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
+  if (newName != lastName || currentLetterIndex != lastLetterIndex) {
+      // drawNameEntryScreen();
+      lastName = newName;
+      lastLetterIndex = currentLetterIndex;
+  }
+  // else {
+
+  // }
+  drawNameEntryScreen();
 }
 
 
