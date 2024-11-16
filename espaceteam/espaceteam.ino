@@ -48,7 +48,6 @@ String userName = "___";
 int currentLetterIndex = 0;         
 char selectedLetters[3] = {'A', 'A', 'A'}; // Array to store the selected letters
 
-// volatile bool nameScreen = false; // this should be started as true first (but false to debug specifically rooms)
 int room[4] = {0, 0, 0, 0};
 int curr_highlight = 0;
 
@@ -284,8 +283,8 @@ void drawNameEntryScreen() {
 
 
 void handleNameEntry() {
-    static String lastName = ""; // track the last drawn name to avoid redundant updates
-    static int lastLetterIndex = -1;
+  static String lastName = ""; // track the last drawn name to avoid redundant updates
+  static int lastLetterIndex = -1;
 
   int currentLeftState = digitalRead(BUTTON_LEFT);
 
@@ -312,7 +311,7 @@ void handleNameEntry() {
 
   lastLeftState = currentLeftState;
 
-    int currentRightState = digitalRead(BUTTON_RIGHT);
+  int currentRightState = digitalRead(BUTTON_RIGHT);
 
   if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
     pressedTime = millis();
@@ -323,8 +322,11 @@ void handleNameEntry() {
     if ( pressDuration < SHORT_PRESS_TIME ) {
       // ledcWrite(0, 0);
       // digitalWrite(MOTOR_PIN, LOW);
-        if (currentLetterIndex < 3){
+        if (currentLetterIndex < 2){
           currentLetterIndex++; // move to next digit
+        }
+        else {
+          currentLetterIndex = 0;
         }
       Serial.println("A short press is detected");
     }
@@ -335,6 +337,8 @@ void handleNameEntry() {
       roomScreen = true;
       tft.fillScreen(TFT_BLACK);
       Serial.println("A long press is detected");
+      lastRightState = currentRightState;
+      return;
     }
   }
   lastRightState = currentRightState;   
@@ -377,6 +381,8 @@ void drawRoom() {
       Serial.println("A long press is detected");
       nameScreen = true;
       roomScreen = false;
+      lastLeftState = currentLeftState;
+      return;
     }
   }
 
@@ -403,6 +409,8 @@ void drawRoom() {
       tft.fillScreen(TFT_BLACK);
       roomScreen = false;
       teamScreen = true;
+      lastRightState = currentRightState;
+      return;
     }
   }
   lastRightState = currentRightState;
