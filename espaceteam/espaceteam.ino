@@ -269,16 +269,17 @@ void drawControls() {
 void drawNameEntryScreen() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Enter Name:", 10, 30, 1);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.drawString("Enter", tft.width()/4+7, 30, 2);
+  tft.drawString("Name", tft.width()/4+7, 70, 2);
 
   for (int i = 0; i < 3; i++) {
     if (i == currentLetterIndex) {
       tft.setTextColor(TFT_RED, TFT_BLACK);
     } else {
-      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
     }
-    tft.drawChar(selectedLetters[i], 40 + i * 30, 70, 2);
+    tft.drawChar(selectedLetters[i], 35 + i * 30, 130, 2);
   }
 }
 
