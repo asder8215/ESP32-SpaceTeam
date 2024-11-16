@@ -42,11 +42,11 @@ const String commandNounsSecond[ARRAY_SIZE] = { "bars", "ices", "pins", "nobs", 
 
 int lineHeight = 30;
 
-volatile bool nameScreen = true;
+volatile bool nameScreen = false; // this should be started as true first (but false to debug specifically rooms)
 int room[4] = {0, 0, 0, 0};
 int curr_highlight = 0;
 
-volatile bool roomScreen = false;
+volatile bool roomScreen = true; 
 #define SHORT_PRESS_TIME 500 // 500 milliseconds
 #define LONG_PRESS_TIME  3000 // 3000 milliseconds
 // Variables will change:
@@ -325,10 +325,9 @@ void drawRoom() {
 void loop() {
 
   if (nameScreen) {
-    drawRoom();
   }
   else if (roomScreen) {
-
+    drawRoom();
   }
   else if (teamScreen) {
 
