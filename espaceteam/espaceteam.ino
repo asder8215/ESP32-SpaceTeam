@@ -1,7 +1,7 @@
 /*
   Spacetime using ESP32
 
-  Modified by Tiffany Tseng for esp32 Arduino Board Definition 3.0+ 
+  Modified for dynamic player management via ESP-NOW
   Originally created by Mark Santolucito for Barnard COMS 3930
   Based on DroneBot Workshop 2022 ESP-NOW Multi Unit Demo
 */
@@ -14,92 +14,113 @@
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 
-String cmd1 = "";
-String cmd2 = "";
-volatile bool scheduleCmd1Send = false;
-volatile bool scheduleCmd2Send = false;
+// Constants
+#define SHORT_PRESS_TIME 500 // 500 milliseconds
+#define LONG_PRESS_TIME  3000 // 3000 milliseconds
+#define BUTTON_LEFT 0
+#define BUTTON_RIGHT 35
 
-String cmdRecvd = "";
-const String waitingCmd = "Wait for cmds";
-bool redrawCmdRecvd = false;
+// Player structure
+struct Player {
+  String name;
+  uint8_t macAddr[6]; // Unique identifier
+  int team; // 0 or 1
+  bool ready;
+};
 
-// for drawing progress bars
-int progress = 0;
-bool redrawProgress = true;
-int lastRedrawTime = 0;
+#define MAX_PLAYERS 10
+// Player players[MAX_PLAYERS];
+Player *players = (Player *) malloc(4 * sizeof(Player));
+int numPlayers = 0;
 
-//we could also use xSemaphoreGiveFromISR and its associated fxns, but this is fine
-volatile bool scheduleCmdAsk = true;
-hw_timer_t *askRequestTimer = NULL;
-volatile bool askExpired = false;
-hw_timer_t *askExpireTimer = NULL;
-int expireLength = 25;
+// Local player information
+Player localPlayer;
 
-#define ARRAY_SIZE 10
-const String commandVerbs[ARRAY_SIZE] = { "Buzz", "Engage", "Floop", "Bother", "Twist", "Jingle", "Jangle", "Yank", "Press", "Play" };
-const String commandNounsFirst[ARRAY_SIZE] = { "foo", "dev", "bobby", "jaw", "tooty", "wu", "fizz", "rot", "tea", "bee" };
-const String commandNounsSecond[ARRAY_SIZE] = { "bars", "ices", "pins", "nobs", "zops", "tangs", "bells", "wels", "pops", "bops" };
+// Screen states
+enum ScreenState {
+  NAME_SCREEN,
+  ROOM_SCREEN,
+  TEAM_SCREEN,
+  GAME_SCREEN,
+  END_SCREEN
+};
 
-int lineHeight = 30;
+ScreenState currentScreen = NAME_SCREEN;
 
-volatile bool nameScreen = true;
-// Define user name vars
+// Name Entry Variables
 String userName = "___";          
 int currentLetterIndex = 0;         
 char selectedLetters[3] = {'A', 'A', 'A'}; // Array to store the selected letters
 
+// Room Selection Variables
 int room[4] = {0, 0, 0, 0};
 int curr_highlight = 0;
 
-volatile bool roomScreen = false; 
-
-#define SHORT_PRESS_TIME 500 // 500 milliseconds
-#define LONG_PRESS_TIME  3000 // 3000 milliseconds
-// Variables will change:
+// Button states
 int lastLeftState = LOW;  // the previous state from the input pin
-// int currentLeftState;     // the current reading from the input pin
 int lastRightState = LOW;
 unsigned long pressedTime  = 0;
 unsigned long releasedTime = 0;
 
-volatile bool teamScreen = false;
+// Team Screen Variables
+int selectedPlayerIndex = 0; // Index in players[]
 
-volatile bool gameScreen = false;
+#define TEAM_A_COLOR TFT_BLUE
+#define TEAM_B_COLOR TFT_PURPLE
 
-volatile bool endScreen = false;
+// Function prototypes
+void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength);
+void sendPlayerInfo();
+void sendPlayerUpdate();
+void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, int dataLen);
+void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status);
+void broadcast(const String &message);
+void espnowSetup();
+void buttonSetup();
+void textSetup();
+void drawNameEntryScreen();
+void handleNameEntry();
+void drawRoomScreen();
+void handleRoomEntry();
+void drawTeamScreen();
+void handleTeamScreen();
+void updateLocalPlayerInPlayersArray();
+void setup();
+void loop();
 
-volatile bool drawControlsOut = true;
-
-// Define LED and pushbutton pins
-#define BUTTON_LEFT 0
-#define BUTTON_RIGHT 35
-
-
-void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength)
-// Formats MAC Address
-{
-  snprintf(buffer, maxLength, "%02x:%02x:%02x:%02x:%02x:%02x", macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
+// Implementations
+void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength) {
+  snprintf(buffer, maxLength, "%02X%02X%02X%02X%02X%02X",
+           macAddr[0], macAddr[1], macAddr[2],
+           macAddr[3], macAddr[4], macAddr[5]);
 }
 
+void sendPlayerInfo() {
+  // Prepare the JOIN message
+  char macStr[13];
+  formatMacAddress(localPlayer.macAddr, macStr, 13);
+  String message = "JOIN:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
+  broadcast(message);
+}
 
-void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, int dataLen)
-/* Called when data is received
-   You can receive 3 types of messages
-   1) a "ASK" message, which indicates that your device should display the cmd if the device is free
-   2) a "DONE" message, which indicates the current ASK? cmd has been executed
-   3) a "PROGRESS" message, indicating a change in the progress of the spaceship
-   
-   Messages are formatted as follows:
-   [A/D]: cmd
-   For example, an ASK message for "Twist the wutangs":
-   A: Twist the wutangs
-   For example, a DONE message for "Engage the devnobs":
-   D: Engage the devnobs
-   For example, a PROGESS message for 75% progress
-   P: 75
-*/
+void sendPlayerUpdate() {
+  // Prepare the UPDATE message
+  char macStr[13];
+  formatMacAddress(localPlayer.macAddr, macStr, 13);
+  String message = "UPDATE:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
+  broadcast(message);
+}
 
-{
+void sendLeaveUpdate() {
+  // Prepare the LEAVE message
+  char macStr[13];
+  formatMacAddress(localPlayer.macAddr, macStr, 13);
+  String message = "LEAVE:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
+  broadcast(message);
+
+}
+
+void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, int dataLen) {
   // Only allow a maximum of 250 characters in the message + a null terminating byte
   char buffer[ESP_NOW_MAX_DATA_LEN + 1];
   int msgLen = min(ESP_NOW_MAX_DATA_LEN, dataLen);
@@ -108,48 +129,114 @@ void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, in
   // Make sure we are null terminated
   buffer[msgLen] = 0;
   String recvd = String(buffer);
-  Serial.println(recvd);
-  // Format the MAC address
-  char macStr[18];
-  // formatMacAddress(macAddr, macStr, 18);
+  Serial.println("Received message: " + recvd);
 
-  // Send Debug log message to the serial port
-  Serial.printf("Received message from: %s \n%s\n", macStr, buffer);
-  if (recvd[0] == 'A' && cmdRecvd == waitingCmd && random(100) < 30)  //only take an ask if you don't have an ask already and only take it XX% of the time
-  {
-    recvd.remove(0, 3);
-    cmdRecvd = recvd;
-    redrawCmdRecvd = true;
-    timerStart(askExpireTimer);  //once you get an ask, a timer starts
-  } else if (recvd[0] == 'D' && recvd.substring(3) == cmdRecvd) {
-    timerWrite(askExpireTimer, 0);
-    timerStop(askExpireTimer);
-    cmdRecvd = waitingCmd;
-    progress = progress + 1;
-    broadcast("P: " + String(progress));
-    redrawCmdRecvd = true;
+  // Parse the message
+  if (recvd.startsWith("JOIN:") || recvd.startsWith("UPDATE:")) {
+    bool isJoin = recvd.startsWith("JOIN:");
+    recvd.remove(0, isJoin ? 5 : 7);
+    int idx1 = recvd.indexOf(':');
+    int idx2 = recvd.indexOf(':', idx1 + 1);
+    int idx3 = recvd.indexOf(':', idx2 + 1);
 
-  } else if (recvd[0] == 'P') {
-    recvd.remove(0, 3);
-    progress = recvd.toInt();
-    redrawProgress = true;
+    String macStr = recvd.substring(0, idx1);
+    String name = recvd.substring(idx1 + 1, idx2);
+    int team = recvd.substring(idx2 + 1, idx3).toInt();
+    bool ready = recvd.substring(idx3 + 1).toInt();
+
+    // Convert MAC string back to uint8_t[6]
+    uint8_t mac[6];
+    sscanf(macStr.c_str(), "%02X%02X%02X%02X%02X%02X",
+           &mac[0], &mac[1], &mac[2],
+           &mac[3], &mac[4], &mac[5]);
+
+    // Check if player already exists
+    bool playerExists = false;
+    for (int i = 0; i < numPlayers; i++) {
+      if (memcmp(players[i].macAddr, mac, 6) == 0) {
+        // Update player info
+        players[i].name = name;
+        players[i].team = team;
+        players[i].ready = ready;
+        playerExists = true;
+        break;
+      }
+    }
+
+    if (!playerExists && numPlayers < MAX_PLAYERS) {
+      // fits player into the first available spot in the players
+      // list
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (memcmp(players[i].macAddr, NULL, 6) == 0) {
+          // memcpy(players[numPlayers].macAddr, mac, 6);
+          // players[numPlayers].name = name;
+          // players[numPlayers].team = team;
+          // players[numPlayers].ready = ready;
+          memcpy(players[i].macAddr, mac, 6);
+          players[i].name = name;
+          players[i].team = team;
+          players[i].ready = ready;
+          numPlayers++;
+          break;
+        }
+      }
+    }
+
+    // Redraw team screen if necessary
+    if (currentScreen == TEAM_SCREEN) {
+      drawTeamScreen();
+    }
+
+    // If received JOIN message, send back our player info
+    if (isJoin) {
+      sendPlayerInfo();
+    }
+  } else if (recvd.startsWith("LEAVE:")) {
+    bool isLeave = recvd.startsWith("LEAVE:");
+    recvd.remove(0, 6);
+    int idx1 = recvd.indexOf(':');
+    int idx2 = recvd.indexOf(':', idx1 + 1);
+    int idx3 = recvd.indexOf(':', idx2 + 1);
+
+    String macStr = recvd.substring(0, idx1);
+    String name = recvd.substring(idx1 + 1, idx2);
+    int team = recvd.substring(idx2 + 1, idx3).toInt();
+    bool ready = recvd.substring(idx3 + 1).toInt();
+
+    // Convert MAC string back to uint8_t[6]
+    uint8_t mac[6];
+    sscanf(macStr.c_str(), "%02X%02X%02X%02X%02X%02X",
+           &mac[0], &mac[1], &mac[2],
+           &mac[3], &mac[4], &mac[5]);
+
+    
+    // // Check if player already exists
+    for (int i = 0; i < numPlayers; i++) {
+      if (memcmp(players[i].macAddr, mac, 6) == 0) {
+        // Player info cleared out
+        memset(&players[i], 0, sizeof(players[i]));
+        numPlayers--;
+        break;
+      }
+    }
+  } else if (recvd.startsWith("START")) {
+    // Move to game screen
+    currentScreen = GAME_SCREEN;
+    tft.fillScreen(TFT_BLACK);
   }
 }
 
-void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status)
-// Called when data is sent
-{
-  char macStr[18];
-  formatMacAddress(macAddr, macStr, 18);
-  Serial.print("Last Packet Sent to: ");
-  Serial.println(macStr);
-  Serial.print("Last Packet Send Status: ");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status) {
+  // Debug print
+  // char macStr[18];
+  // formatMacAddress(macAddr, macStr, 18);
+  // Serial.print("Last Packet Sent to: ");
+  // Serial.println(macStr);
+  // Serial.print("Last Packet Send Status: ");
+  // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
-void broadcast(const String &message)
-// Emulates a broadcast
-{
+void broadcast(const String &message) {
   // Broadcast a message to every device in range
   uint8_t broadcastAddress[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
   esp_now_peer_info_t peerInfo = {};
@@ -158,36 +245,17 @@ void broadcast(const String &message)
     esp_now_add_peer(&peerInfo);
   }
   // Send message
-  esp_err_t result = esp_now_send(broadcastAddress, (const uint8_t *)message.c_str(), message.length());
-}
-
-void IRAM_ATTR sendCmd1() {
-  scheduleCmd1Send = true;
-}
-
-void IRAM_ATTR sendCmd2() {
-  scheduleCmd2Send = true;
-}
-
-void IRAM_ATTR onAskReqTimer() {
-  scheduleCmdAsk = true;
-}
-
-void IRAM_ATTR onAskExpireTimer() {
-  askExpired = true;
-  timerStop(askExpireTimer);
-  timerWrite(askExpireTimer, 0);
+  esp_now_send(broadcastAddress, (const uint8_t *)message.c_str(), message.length());
 }
 
 void espnowSetup() {
-  // Set ESP32 in STA mode to begin with
+  // Set ESP32 in STA mode
   delay(500);
   WiFi.mode(WIFI_STA);
   Serial.println("ESP-NOW Broadcast Demo");
 
-  // Print MAC address
-  Serial.print("MAC Address: ");
-  Serial.println(WiFi.macAddress());
+  // Get local MAC address
+  WiFi.macAddress(localPlayer.macAddr);
 
   // Disconnect from WiFi
   WiFi.disconnect();
@@ -207,66 +275,25 @@ void espnowSetup() {
 void buttonSetup() {
   pinMode(BUTTON_LEFT, INPUT_PULLUP);
   pinMode(BUTTON_RIGHT, INPUT_PULLUP);
-
-  // attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT), sendCmd1, FALLING);
-  // attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), sendCmd2, FALLING);
 }
 
 void textSetup() {
   tft.init();
   tft.setRotation(0);
-
   tft.setTextSize(2);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  // drawControls();
-
-  cmdRecvd = waitingCmd;
-  redrawCmdRecvd = true;
 }
 
-void timerSetup() {
-  // https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/timer.html
-  askRequestTimer = timerBegin(1000000); // 1MHz
-  timerAttachInterrupt(askRequestTimer, &onAskReqTimer);
-  timerAlarm(askRequestTimer, 5 * 1000000, true, 0);  //send out an ask every 5 secs
-
-  askExpireTimer = timerBegin(80000000);
-  timerAttachInterrupt(askExpireTimer, &onAskExpireTimer);
-  timerAlarm(askExpireTimer, expireLength * 1000000, true, 0);
-  timerStop(askExpireTimer);
-}
 void setup() {
   Serial.begin(115200);
-
   textSetup();
   buttonSetup();
   espnowSetup();
-  timerSetup();
-
   // drawNameEntryScreen(); 
 }
 
-String genCommand() {
-  String verb = commandVerbs[random(ARRAY_SIZE)];
-  String noun1 = commandNounsFirst[random(ARRAY_SIZE)];
-  String noun2 = commandNounsSecond[random(ARRAY_SIZE)];
-  return verb + " " + noun1 + noun2;
-}
-
-void drawControls() {
-
-  cmd1 = genCommand();
-  cmd2 = genCommand();
-  cmd1.indexOf(' ');
-  tft.drawString("B1: " + cmd1.substring(0, cmd1.indexOf(' ')), 0, 90, 2);
-  tft.drawString(cmd1.substring(cmd1.indexOf(' ') + 1), 0, 90 + lineHeight, 2);
-  tft.drawString("B2: " + cmd2.substring(0, cmd2.indexOf(' ')), 0, 170, 2);
-  tft.drawString(cmd2.substring(cmd2.indexOf(' ') + 1), 0, 170 + lineHeight, 2);
-}
-
 void drawNameEntryScreen() {
-  // tft.fillScreen(TFT_BLACK);
   tft.setTextSize(2);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.drawString("Enter", tft.width()/4+7, 30, 2);
@@ -281,7 +308,6 @@ void drawNameEntryScreen() {
     tft.drawChar(selectedLetters[i], 35 + i * 30, 130, 2);
   }
 }
-
 
 void handleNameEntry() {
   static String lastName = ""; // track the last drawn name to avoid redundant updates
@@ -301,11 +327,6 @@ void handleNameEntry() {
             selectedLetters[currentLetterIndex] = 'A';
         }
     }
-
-    if ( pressDuration > LONG_PRESS_TIME ){
-      // don't do any action
-      Serial.println("A long press is detected");
-    }
   }
 
   lastLeftState = currentLeftState;
@@ -319,27 +340,28 @@ void handleNameEntry() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-        if (currentLetterIndex < 2){
-          currentLetterIndex++; // move to next digit
-        }
-        else {
-          currentLetterIndex = 0;
-        }
-      Serial.println("A short press is detected");
+        // if (currentLetterIndex < 2){
+        //   currentLetterIndex++; // move to next digit
+        // } else {
+        //   currentLetterIndex = 0;
+        // }
+        currentLetterIndex = (currentLetterIndex + 1) % 3;
     }
 
     if ( pressDuration > LONG_PRESS_TIME ){
-      // move to room selection screen
-      nameScreen = false;
-      roomScreen = true;
+      // Finalize name and proceed to room selection
+      String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
+      userName = newName;
+      localPlayer.name = userName;
+      localPlayer.team = 0; // Default team
+      localPlayer.ready = false;
+      currentScreen = ROOM_SCREEN;
       tft.fillScreen(TFT_BLACK);
-      Serial.println("A long press is detected");
-      lastRightState = currentRightState;
+      lastRightState = currentRightState; 
       return;
     }
   }
   lastRightState = currentRightState;   
-    
 
   // update the userName and redraw if name or current letter index changes
   String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
@@ -348,73 +370,11 @@ void handleNameEntry() {
       lastName = newName;
       lastLetterIndex = currentLetterIndex;
   }
-  // else {
-
-  // }
   drawNameEntryScreen();
 }
 
-
-
-void drawRoom() {
-  // tft.fillScreen(TFT_BLACK);
-  // tft.setTextDatum(MR_DATUM);
+void drawRoomScreen() {
   tft.drawString("Room Num", tft.width()/4 - 20, 30, 2);
-
-  int currentLeftState = digitalRead(BUTTON_LEFT);
-
-  // Detect left button press
-  // Short Press: Change number by incrementation (0-9, wraparound)
-  // Long Press: Go back to name screen
-  if (lastLeftState == HIGH && currentLeftState == LOW)       // button is pressed
-    pressedTime = millis();
-  else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
-    releasedTime = millis();
-    long pressDuration = releasedTime - pressedTime;
-
-    if ( pressDuration < SHORT_PRESS_TIME ) {
-      room[curr_highlight] = (room[curr_highlight] + 1) % 10;
-      Serial.println("A short press is detected");
-    }
-
-    if ( pressDuration > LONG_PRESS_TIME ){
-      tft.fillScreen(TFT_BLACK);
-      Serial.println("A long press is detected");
-      nameScreen = true;
-      roomScreen = false;
-      lastLeftState = currentLeftState;
-      return;
-    }
-  }
-
-  lastLeftState = currentLeftState;
-
-  int currentRightState = digitalRead(BUTTON_RIGHT);
-
-  // Detect right button press
-  // Short Press: Change character position to change 
-  // Long Press: Go forward to team screen
-  if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
-    pressedTime = millis();
-  else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
-    releasedTime = millis();
-    long pressDuration = releasedTime - pressedTime;
-
-    if ( pressDuration < SHORT_PRESS_TIME ) {
-      curr_highlight = (curr_highlight + 1) % 4;
-      Serial.println("A short press is detected");
-    }
-
-    if ( pressDuration > LONG_PRESS_TIME ){
-      Serial.println("A long press is detected");
-      tft.fillScreen(TFT_BLACK);
-      roomScreen = false;
-      teamScreen = true;
-      lastRightState = currentRightState;
-      return;
-    }
-  }
-  lastRightState = currentRightState;
 
   // Room Screen UI
   for (int i = 0; i < 4; i++) {
@@ -427,76 +387,335 @@ void drawRoom() {
     tft.drawChar(char(room[i] + '0'), 30 + i * 20, tft.height()/2, 2);
   }
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
+}
 
+void handleRoomEntry() {
+  int currentLeftState = digitalRead(BUTTON_LEFT);
+
+  // Detect left button press
+  if (lastLeftState == HIGH && currentLeftState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      room[curr_highlight] = (room[curr_highlight] + 1) % 10;
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      tft.fillScreen(TFT_BLACK);
+      currentScreen = NAME_SCREEN;
+      lastLeftState = currentLeftState;
+      return;
+    }
+  }
+
+  lastLeftState = currentLeftState;
+
+  int currentRightState = digitalRead(BUTTON_RIGHT);
+
+  // Detect right button press
+  if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      curr_highlight = (curr_highlight + 1) % 4;
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      tft.fillScreen(TFT_BLACK);
+
+      currentScreen = TEAM_SCREEN;
+
+      // **Add local player to players array**
+      updateLocalPlayerInPlayersArray();
+
+      // Send initial player info
+      sendPlayerInfo();
+      lastRightState = currentRightState;
+      drawTeamScreen();
+      return;
+    }
+  }
+  lastRightState = currentRightState;
+  drawRoomScreen();
+}
+
+void updateLocalPlayerInPlayersArray() {
+  bool playerExists = false;
+  for (int i = 0; i < numPlayers; i++) {
+    if (memcmp(players[i].macAddr, localPlayer.macAddr, 6) == 0) {
+      // Update player info
+      players[i].name = localPlayer.name;
+      players[i].team = localPlayer.team;
+      players[i].ready = localPlayer.ready;
+      playerExists = true;
+      break;
+    }
+  }
+  if (!playerExists && numPlayers < MAX_PLAYERS) {
+    // Add new player
+    memcpy(players[numPlayers].macAddr, localPlayer.macAddr, 6);
+    players[numPlayers].name = localPlayer.name;
+    players[numPlayers].team = localPlayer.team;
+    players[numPlayers].ready = localPlayer.ready;
+    numPlayers++;
+  }
+}
+
+void clearLocalPlayerInPlayersArray() {
+  for (int i = 0; i < numPlayers; i++) {
+    memset(&players[i], 0, sizeof(players[i]));
+  }
+}
+
+void drawTeamScreen() {
+  tft.fillScreen(TFT_BLACK);
+
+  // Draw Team A header
+  tft.setTextColor(TEAM_A_COLOR, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString("Team A", 20, 20);
+
+  // Draw Team B header
+  tft.setTextColor(TEAM_B_COLOR, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString("Team B", 20, 120);
+
+  // Draw players in Team A
+  int teamAPosition = 50; // Vertical position for Team A names
+  int teamACount = 0;
+  int teamBCount = 0;
+  for (int i = 0; i < numPlayers; i++) {
+    if (players[i].team == 0) { // Team A
+      tft.setTextColor(TEAM_A_COLOR, TFT_BLACK);
+      tft.drawString(players[i].name, 20, teamAPosition);
+
+      // Draw readiness indicator after the name
+      if (players[i].ready) {
+        int nameWidth = tft.textWidth(players[i].name, 2); // Calculate the width of the name
+        tft.drawString(".", 20 + nameWidth + 5, teamAPosition);
+      }
+
+      teamAPosition += 30; // Increment position for Team A
+      teamACount++;
+    }
+  }
+
+  // Draw players in Team B
+  int teamBPosition = 150; // Vertical position for Team B names
+  for (int i = 0; i < numPlayers; i++) {
+    if (players[i].team == 1) { // Team B
+      tft.setTextColor(TEAM_B_COLOR, TFT_BLACK);
+      tft.drawString(players[i].name, 20, teamBPosition);
+
+      // Draw readiness indicator after the name
+      if (players[i].ready) {
+        int nameWidth = tft.textWidth(players[i].name, 2); // Calculate the width of the name
+        tft.drawString(".", 20 + nameWidth + 5, teamBPosition);
+      }
+
+      teamBPosition += 30; // Increment position for Team B
+      teamBCount++;
+    }
+  }
+
+  // Highlight the local player
+  for (int i = 0; i < numPlayers; i++) {
+    if (memcmp(players[i].macAddr, localPlayer.macAddr, 6) == 0) {
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      int position;
+      if (players[i].team == 0) {
+        position = 50 + 30 * i;
+      } else {
+        position = 150 + 30 * i;
+      }
+      tft.drawString(">", 5, position);
+      break;
+    }
+  }
+}
+
+void handleTeamScreen() {
+  static unsigned long pressedTimeLeft = 0;
+  static unsigned long releasedTimeLeft = 0;
+  static unsigned long pressedTimeRight = 0;
+  static unsigned long releasedTimeRight = 0;
+
+  int currentLeftState = digitalRead(BUTTON_LEFT);
+  int currentRightState = digitalRead(BUTTON_RIGHT);
+
+  // Handle left button (toggle team assignment)
+  if (lastLeftState == HIGH && currentLeftState == LOW) { // button is pressed
+    pressedTimeLeft = millis();
+  } else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
+    releasedTimeLeft = millis();
+    long pressDuration = releasedTimeLeft - pressedTimeLeft;
+
+    if (pressDuration < SHORT_PRESS_TIME) {
+      // Toggle the team for the local player
+      localPlayer.team = 1 - localPlayer.team;
+
+      // **Update local player in players array**
+      updateLocalPlayerInPlayersArray();
+
+      sendPlayerUpdate(); // Broadcast the change
+      drawTeamScreen(); // Redraw the screen with updated teams
+    } else if (pressDuration < LONG_PRESS_TIME) {
+      currentScreen = ROOM_SCREEN;
+      tft.fillScreen(TFT_BLACK);
+      clearLocalPlayerInPlayersArray();
+      sendLeaveUpdate();
+    }
+  }
+  lastLeftState = currentLeftState;
+
+  // Handle right button (toggle readiness or proceed to game screen)
+  if (lastRightState == HIGH && currentRightState == LOW) { // button is pressed
+    pressedTimeRight = millis();
+  } else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
+    releasedTimeRight = millis();
+    long pressDuration = releasedTimeRight - pressedTimeRight;
+
+    if (pressDuration < SHORT_PRESS_TIME) {
+      // Toggle readiness for the local player
+      localPlayer.ready = !localPlayer.ready; // Toggle readiness
+
+      // **Update local player in players array**
+      updateLocalPlayerInPlayersArray();
+
+      sendPlayerUpdate(); // Broadcast the change
+      drawTeamScreen(); // Redraw the screen with updated readiness
+    } else if (pressDuration > LONG_PRESS_TIME) {
+      // Check if game can start
+      int teamACount = 0;
+      int teamBCount = 0;
+      int teamAReady = 0;
+      int teamBReady = 0;
+      for (int i = 0; i < numPlayers; i++) {
+        if (players[i].team == 0) {
+          teamACount++;
+          if (players[i].ready) teamAReady++;
+        } else {
+          teamBCount++;
+          if (players[i].ready) teamBReady++;
+        }
+      }
+
+      // Check if both teams have at least 2 ready players
+      if (teamACount >= 2 && teamAReady >= 2 && teamBCount >= 2 && teamBReady >= 2) {
+        // Proceed to game screen
+        currentScreen = GAME_SCREEN;
+        tft.fillScreen(TFT_BLACK);
+        // Notify others to start the game
+        broadcast("START");
+      } else {
+        // Display a message or indicate that the game cannot start
+        tft.setTextColor(TFT_RED, TFT_BLACK);
+        tft.drawString("Not enough players", 10, 200);
+      }
+    }
+  }
+  lastRightState = currentRightState;
+}
+
+void handleWinScreen(){
+  int currentLeftState = digitalRead(BUTTON_LEFT); // rematch
+  int currentRightState = digitalRead(BUTTON_RIGHT); // quit
+
+  if (currentLeftState == LOW) {
+    // player wants to replay, return to gameScreen
+    tft.fillScreen(TFT_BLACK);
+    currentScreen = TEAM_SCREEN;
+    // **Add local player to players array**
+    updateLocalPlayerInPlayersArray();
+
+    // Send initial player info
+    sendPlayerInfo();
+    drawTeamScreen();
+    return;
+  }
+  else if (currentRightState == LOW) { 
+    // player picked quit, returns other players to waiting room (teamScreen)
+    tft.fillScreen(TFT_BLACK);
+    currentScreen = NAME_SCREEN;
+    // call drawteamScreen function?
+    return;
+  }
+  drawWinScreen();
+}
+
+void drawWinScreen(){
+  // variable for teamScreen to display winner name
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextSize(3); // Set a larger font for emphasis
+
+  String teamWinsLine1 = "Team _";
+  int16_t x1 = (tft.width() - tft.textWidth(teamWinsLine1, 2)) / 2; // Center horizontally
+  tft.drawString(teamWinsLine1, x1, 20, 2);
+
+  // Second part
+  String teamWinsLine2 = "WINS!";
+  x1 = (tft.width() - tft.textWidth(teamWinsLine2, 2)) / 2;
+  tft.drawString(teamWinsLine2, x1, 80, 2);
+/*
+  String teamWins = "Team _ Wins";
+  int16_t x1 = (tft.width() - tft.textWidth(teamWins, 2)) / 2; // Center horizontally
+  tft.drawString(teamWins, x1, 30, 2);*/
+
+  tft.setTextSize(2); // Set a larger font for emphasis
+  String rematch = "Rematch?";
+  x1 = (tft.width() - tft.textWidth(rematch, 2)) / 2; // Center horizontally
+  tft.drawString(rematch, x1, 140, 2);
+
+  String quit = "Quit?";
+  x1 = (tft.width() - tft.textWidth(quit, 2)) / 2; // Center horizontally
+  tft.drawString(quit, x1, 170, 2);
+  /*
+  tft.drawString("Team _ Wins", tft.width()/4 - 20, 30, 2);
+  tft.drawString("Rematch?", tft.width()/4 - 20, 60, 2);
+  tft.drawString("Quit?", tft.width()/4 - 20, 90, 2); */
+
+  // int currentLeftState = digitalRead(BUTTON_LEFT); // rematch
+  // int currentRightState = digitalRead(BUTTON_RIGHT); // quit
+
+  // if (currentLeftState == LOW) {
+  //   // player wants to replay, return to gameScreen
+  //   tft.fillScreen(TFT_BLACK);
+  //   teamScreen = true;
+  //   endScreen = false;
+  //   // call drawGameScreen?
+  // }
+  // else if (currentRightState == LOW) { 
+  //   // player picked quit, returns other players to waiting room (teamScreen)
+  //   tft.fillScreen(TFT_BLACK);
+  //   nameScreen = true;
+  //   endScreen = false;
+  //   // call drawteamScreen function?
+  // }
 }
 
 void loop() {
-
-  if (nameScreen) {
-    handleNameEntry();
-  }
-  else if (roomScreen) {
-    drawRoom();
-  }
-  else if (teamScreen) {
-
-  }
-  else if (gameScreen) {
-    if (drawControlsOut){
-      drawControls();
-      drawControlsOut = false;
-    }
-    if (scheduleCmd1Send) {
-      broadcast("D: " + cmd1);
-      scheduleCmd1Send = false;
-    }
-    if (scheduleCmd2Send) {
-      broadcast("D: " + cmd2);
-      scheduleCmd2Send = false;
-    }
-    if (scheduleCmdAsk) {
-      String cmdAsk = random(2) ? cmd1 : cmd2;
-      broadcast("A: " + cmdAsk);
-      scheduleCmdAsk = false;
-    }
-    if (askExpired) {
-      progress = max(0, progress - 1);
-      broadcast(String(progress));
-      //tft.fillRect(0, 0, 135, 90, TFT_RED);
-      cmdRecvd = waitingCmd;
-      redrawCmdRecvd = true;
-      askExpired = false;
-    }
-
-    if ((millis() - lastRedrawTime) > 50) {
-      tft.fillRect(15, lineHeight * 2 + 14, 100, 6, TFT_GREEN);
-      tft.fillRect(16, lineHeight * 2 + 14 + 1, (((expireLength * 1000000.0) - timerRead(askExpireTimer)) / (expireLength * 1000000.0)) * 98, 4, TFT_RED);
-      lastRedrawTime = millis();
-    }
-
-    if (redrawCmdRecvd || redrawProgress) {
-      tft.fillRect(0, 0, 135, 90, TFT_BLACK);
-      tft.drawString(cmdRecvd.substring(0, cmdRecvd.indexOf(' ')), 0, 0, 2);
-      tft.drawString(cmdRecvd.substring(cmdRecvd.indexOf(' ') + 1), 0, 0 + lineHeight, 2);
-      redrawCmdRecvd = false;
-
-      if (progress >= 100) {
-        tft.fillScreen(TFT_BLUE);
-        tft.setTextSize(3);
-        tft.setTextColor(TFT_WHITE, TFT_BLUE);
-        tft.drawString("GO", 45, 20, 2);
-        tft.drawString("COMS", 20, 80, 2);
-        tft.drawString("3930!", 18, 130, 2);
-        delay(6000);
-        ESP.restart();
-      } else {
-        tft.fillRect(15, lineHeight * 2 + 5, 100, 6, TFT_GREEN);
-        tft.fillRect(16, lineHeight * 2 + 5 + 1, progress, 4, TFT_BLUE);
-      }
-      redrawProgress = false;
-    }
-  }
-  else if (endScreen) {
-
+  switch (currentScreen) {
+    case NAME_SCREEN:
+      handleNameEntry();
+      break;
+    case ROOM_SCREEN:
+      handleRoomEntry();
+      break;
+    case TEAM_SCREEN:
+      handleTeamScreen();
+      break;
+    case GAME_SCREEN:
+      // Game logic here
+      break;
+    case END_SCREEN:
+      handleWinScreen();
+      // End screen logic here
+      break;
   }
 }
