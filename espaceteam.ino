@@ -42,6 +42,28 @@ const String commandNounsSecond[ARRAY_SIZE] = { "bars", "ices", "pins", "nobs", 
 
 int lineHeight = 30;
 
+volatile bool nameScreen = true;
+int room[4] = {0, 0, 0, 0};
+int curr_highlight = 0;
+
+volatile bool roomScreen = false;
+#define SHORT_PRESS_TIME 500 // 500 milliseconds
+#define LONG_PRESS_TIME  3000 // 3000 milliseconds
+// Variables will change:
+int lastLeftState = LOW;  // the previous state from the input pin
+// int currentLeftState;     // the current reading from the input pin
+int lastRightState = LOW;
+unsigned long pressedTime  = 0;
+unsigned long releasedTime = 0;
+
+volatile bool teamScreen = false;
+
+volatile bool gameScreen = false;
+
+volatile bool endScreen = false;
+
+volatile bool drawControlsOut = true;
+
 // Define LED and pushbutton pins
 #define BUTTON_LEFT 0
 #define BUTTON_RIGHT 35
@@ -177,11 +199,11 @@ void espnowSetup() {
 }
 
 void buttonSetup() {
-  pinMode(BUTTON_LEFT, INPUT);
-  pinMode(BUTTON_RIGHT, INPUT);
+  pinMode(BUTTON_LEFT, INPUT_PULLUP);
+  pinMode(BUTTON_RIGHT, INPUT_PULLUP);
 
-  attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT), sendCmd1, FALLING);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), sendCmd2, FALLING);
+  // attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT), sendCmd1, FALLING);
+  // attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), sendCmd2, FALLING);
 }
 
 void textSetup() {
@@ -191,7 +213,7 @@ void textSetup() {
   tft.setTextSize(2);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  drawControls();
+  // drawControls();
 
   cmdRecvd = waitingCmd;
   redrawCmdRecvd = true;
@@ -235,55 +257,138 @@ void drawControls() {
   tft.drawString(cmd2.substring(cmd2.indexOf(' ') + 1), 0, 170 + lineHeight, 2);
 }
 
+void drawRoom() {
+  // tft.fillScreen(TFT_BLACK);
+  // tft.setTextDatum(MR_DATUM);
+  tft.drawString("Room Num", tft.width()/4 - 20, 30, 2);
+
+  int currentLeftState = digitalRead(BUTTON_LEFT);
+
+  if (lastLeftState == HIGH && currentLeftState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      // ledcWrite(0, 0);
+      // digitalWrite(MOTOR_PIN, LOW);
+      room[curr_highlight] = (room[curr_highlight] + 1) % 10;
+      Serial.println("A short press is detected");
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      // don't do any action
+      Serial.println("A long press is detected");
+    }
+  }
+
+  lastLeftState = currentLeftState;
+
+  int currentRightState = digitalRead(BUTTON_RIGHT);
+
+  if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      // ledcWrite(0, 0);
+      // digitalWrite(MOTOR_PIN, LOW);
+      curr_highlight = (curr_highlight + 1) % 4;
+      Serial.println("A short press is detected");
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      // don't do any action
+      Serial.println("A long press is detected");
+    }
+  }
+  lastRightState = currentRightState;
+
+  // tft.setCursor(10 + curr_underscore_ind * 20, tft.height()/2 + 10, 2);
+  for (int i = 0; i < 4; i++) {
+    if (i == curr_highlight) {
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+    }
+    else {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    }
+    tft.drawChar(char(room[i] + '0'), 30 + i * 20, tft.height()/2, 2);
+  }
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  // tft.drawString("", 30 + curr_underscore_ind * 20, tft.height()/2 + 20, 2);
+
+}
+
 void loop() {
 
-  if (scheduleCmd1Send) {
-    broadcast("D: " + cmd1);
-    scheduleCmd1Send = false;
+  if (nameScreen) {
+    drawRoom();
   }
-  if (scheduleCmd2Send) {
-    broadcast("D: " + cmd2);
-    scheduleCmd2Send = false;
-  }
-  if (scheduleCmdAsk) {
-    String cmdAsk = random(2) ? cmd1 : cmd2;
-    broadcast("A: " + cmdAsk);
-    scheduleCmdAsk = false;
-  }
-  if (askExpired) {
-    progress = max(0, progress - 1);
-    broadcast(String(progress));
-    //tft.fillRect(0, 0, 135, 90, TFT_RED);
-    cmdRecvd = waitingCmd;
-    redrawCmdRecvd = true;
-    askExpired = false;
-  }
+  else if (roomScreen) {
 
-  if ((millis() - lastRedrawTime) > 50) {
-    tft.fillRect(15, lineHeight * 2 + 14, 100, 6, TFT_GREEN);
-    tft.fillRect(16, lineHeight * 2 + 14 + 1, (((expireLength * 1000000.0) - timerRead(askExpireTimer)) / (expireLength * 1000000.0)) * 98, 4, TFT_RED);
-    lastRedrawTime = millis();
   }
+  else if (teamScreen) {
 
-  if (redrawCmdRecvd || redrawProgress) {
-    tft.fillRect(0, 0, 135, 90, TFT_BLACK);
-    tft.drawString(cmdRecvd.substring(0, cmdRecvd.indexOf(' ')), 0, 0, 2);
-    tft.drawString(cmdRecvd.substring(cmdRecvd.indexOf(' ') + 1), 0, 0 + lineHeight, 2);
-    redrawCmdRecvd = false;
-
-    if (progress >= 100) {
-      tft.fillScreen(TFT_BLUE);
-      tft.setTextSize(3);
-      tft.setTextColor(TFT_WHITE, TFT_BLUE);
-      tft.drawString("GO", 45, 20, 2);
-      tft.drawString("COMS", 20, 80, 2);
-      tft.drawString("3930!", 18, 130, 2);
-      delay(6000);
-      ESP.restart();
-    } else {
-      tft.fillRect(15, lineHeight * 2 + 5, 100, 6, TFT_GREEN);
-      tft.fillRect(16, lineHeight * 2 + 5 + 1, progress, 4, TFT_BLUE);
+  }
+  else if (gameScreen) {
+    if (drawControlsOut){
+      drawControls();
+      drawControlsOut = false;
     }
-    redrawProgress = false;
+    if (scheduleCmd1Send) {
+      broadcast("D: " + cmd1);
+      scheduleCmd1Send = false;
+    }
+    if (scheduleCmd2Send) {
+      broadcast("D: " + cmd2);
+      scheduleCmd2Send = false;
+    }
+    if (scheduleCmdAsk) {
+      String cmdAsk = random(2) ? cmd1 : cmd2;
+      broadcast("A: " + cmdAsk);
+      scheduleCmdAsk = false;
+    }
+    if (askExpired) {
+      progress = max(0, progress - 1);
+      broadcast(String(progress));
+      //tft.fillRect(0, 0, 135, 90, TFT_RED);
+      cmdRecvd = waitingCmd;
+      redrawCmdRecvd = true;
+      askExpired = false;
+    }
+
+    if ((millis() - lastRedrawTime) > 50) {
+      tft.fillRect(15, lineHeight * 2 + 14, 100, 6, TFT_GREEN);
+      tft.fillRect(16, lineHeight * 2 + 14 + 1, (((expireLength * 1000000.0) - timerRead(askExpireTimer)) / (expireLength * 1000000.0)) * 98, 4, TFT_RED);
+      lastRedrawTime = millis();
+    }
+
+    if (redrawCmdRecvd || redrawProgress) {
+      tft.fillRect(0, 0, 135, 90, TFT_BLACK);
+      tft.drawString(cmdRecvd.substring(0, cmdRecvd.indexOf(' ')), 0, 0, 2);
+      tft.drawString(cmdRecvd.substring(cmdRecvd.indexOf(' ') + 1), 0, 0 + lineHeight, 2);
+      redrawCmdRecvd = false;
+
+      if (progress >= 100) {
+        tft.fillScreen(TFT_BLUE);
+        tft.setTextSize(3);
+        tft.setTextColor(TFT_WHITE, TFT_BLUE);
+        tft.drawString("GO", 45, 20, 2);
+        tft.drawString("COMS", 20, 80, 2);
+        tft.drawString("3930!", 18, 130, 2);
+        delay(6000);
+        ESP.restart();
+      } else {
+        tft.fillRect(15, lineHeight * 2 + 5, 100, 6, TFT_GREEN);
+        tft.fillRect(16, lineHeight * 2 + 5 + 1, progress, 4, TFT_BLUE);
+      }
+      redrawProgress = false;
+    }
+  }
+  else if (endScreen) {
+
   }
 }
