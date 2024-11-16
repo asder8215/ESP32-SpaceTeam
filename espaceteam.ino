@@ -42,11 +42,18 @@ const String commandNounsSecond[ARRAY_SIZE] = { "bars", "ices", "pins", "nobs", 
 
 int lineHeight = 30;
 
-volatile bool nameScreen = false; // this should be started as true first (but false to debug specifically rooms)
+volatile bool nameScreen = true;
+// Define user name vars
+String userName = "___";          
+int currentLetterIndex = 0;         
+char selectedLetters[3] = {'A', 'A', 'A'}; // Array to store the selected letters
+
+// volatile bool nameScreen = false; // this should be started as true first (but false to debug specifically rooms)
 int room[4] = {0, 0, 0, 0};
 int curr_highlight = 0;
 
-volatile bool roomScreen = true; 
+volatile bool roomScreen = false; 
+
 #define SHORT_PRESS_TIME 500 // 500 milliseconds
 #define LONG_PRESS_TIME  3000 // 3000 milliseconds
 // Variables will change:
@@ -237,6 +244,8 @@ void setup() {
   buttonSetup();
   espnowSetup();
   timerSetup();
+
+  drawNameEntryScreen(); 
 }
 
 String genCommand() {
@@ -256,6 +265,91 @@ void drawControls() {
   tft.drawString("B2: " + cmd2.substring(0, cmd2.indexOf(' ')), 0, 170, 2);
   tft.drawString(cmd2.substring(cmd2.indexOf(' ') + 1), 0, 170 + lineHeight, 2);
 }
+
+void drawNameEntryScreen() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Enter Name:", 10, 30, 1);
+
+  for (int i = 0; i < 3; i++) {
+    if (i == currentLetterIndex) {
+      tft.setTextColor(TFT_RED, TFT_BLACK);
+    } else {
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    }
+    tft.drawChar(selectedLetters[i], 40 + i * 30, 70, 2);
+  }
+}
+
+
+void handleNameEntry() {
+    static String lastName = ""; // track the last drawn name to avoid redundant updates
+    static int lastLetterIndex = -1;
+
+  int currentLeftState = digitalRead(BUTTON_LEFT);
+
+  if (lastLeftState == HIGH && currentLeftState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastLeftState == LOW && currentLeftState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      // ledcWrite(0, 0);
+      // digitalWrite(MOTOR_PIN, LOW);
+        selectedLetters[currentLetterIndex]++;
+        if (selectedLetters[currentLetterIndex] > 'Z') {
+            selectedLetters[currentLetterIndex] = 'A';
+        }
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      // don't do any action
+      Serial.println("A long press is detected");
+    }
+  }
+
+  lastLeftState = currentLeftState;
+
+    int currentRightState = digitalRead(BUTTON_RIGHT);
+
+  if (lastRightState == HIGH && currentRightState == LOW)       // button is pressed
+    pressedTime = millis();
+  else if (lastRightState == LOW && currentRightState == HIGH) { // button is released
+    releasedTime = millis();
+    long pressDuration = releasedTime - pressedTime;
+
+    if ( pressDuration < SHORT_PRESS_TIME ) {
+      // ledcWrite(0, 0);
+      // digitalWrite(MOTOR_PIN, LOW);
+        if (currentLetterIndex < 3){
+          currentLetterIndex++; // move to next digit
+        }
+      Serial.println("A short press is detected");
+    }
+
+    if ( pressDuration > LONG_PRESS_TIME ){
+      // move to room selection screen
+      nameScreen = false;
+      roomScreen = true;
+      tft.fillScreen(TFT_BLACK);
+      Serial.println("A long press is detected");
+    }
+  }
+  lastRightState = currentRightState;   
+    
+
+    // update the userName and redraw if name or current letter index changes
+    String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
+    if (newName != lastName || currentLetterIndex != lastLetterIndex) {
+        drawNameEntryScreen();
+        lastName = newName;
+        lastLetterIndex = currentLetterIndex;
+    }
+}
+
+
 
 void drawRoom() {
   // tft.fillScreen(TFT_BLACK);
@@ -325,6 +419,7 @@ void drawRoom() {
 void loop() {
 
   if (nameScreen) {
+    handleNameEntry();
   }
   else if (roomScreen) {
     drawRoom();
