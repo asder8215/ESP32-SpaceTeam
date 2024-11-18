@@ -141,6 +141,17 @@ void sendPlayerUpdate() {
   return;
 }
 
+void sendStartRequest() {
+  // Prepare the JOIN_REQUEST message
+  char macStr[13];
+  formatMacAddress(localPlayer.macAddr, macStr, 13);
+  char message[100];
+  snprintf(message, sizeof(message), "START:%d:%s:%s:%d:%d",
+           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready);
+  broadcast(String(message));
+  return;
+}
+
 void sendLeaveUpdate() {
   // Prepare the LEAVE message
   char macStr[13];
@@ -700,7 +711,8 @@ void handleTeamScreen() {
         currentScreen = GAME_SCREEN;
         tft.fillScreen(TFT_BLACK);
         // Notify others to start the game
-        broadcast("START");
+        // broadcast("START");
+        sendStartRequest();
       } else {
         // Display a message or indicate that the game cannot start
         tft.setTextColor(TFT_RED, TFT_BLACK);
