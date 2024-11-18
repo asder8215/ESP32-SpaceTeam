@@ -162,7 +162,7 @@ void sendLeaveUpdate() {
 }
 
 void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int dataLen) {
-  if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+  // if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
     char buffer[ESP_NOW_MAX_DATA_LEN + 1];
     int msgLen = min(ESP_NOW_MAX_DATA_LEN, dataLen);
     strncpy(buffer, (const char *)data, msgLen);
@@ -316,9 +316,9 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
       currentScreen = GAME_SCREEN;
       tft.fillScreen(TFT_BLACK);
     }
-    xSemaphoreGive(mutex);
-  }
-  delay(100);
+  //   xSemaphoreGive(mutex);
+  // }
+  // delay(100);
   return;
 }
 
@@ -789,7 +789,7 @@ void drawWinScreen() {
 }
 
 void loop() {
-  if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+  // if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
     switch (currentScreen) {
       case NAME_SCREEN:
         handleNameEntry();
@@ -807,7 +807,7 @@ void loop() {
         handleWinScreen();
         break;
     }
-    xSemaphoreGive(mutex);
-  }
-  delay(100);
+  //   xSemaphoreGive(mutex);
+  // }
+  delay(50);
 }
