@@ -14,24 +14,44 @@
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 
+SemaphoreHandle_t mutex;  // Declare a mutex handle
+
 // Constants
-#define SHORT_PRESS_TIME 500 // 500 milliseconds
+#define SHORT_PRESS_TIME 500  // 500 milliseconds
 #define LONG_PRESS_TIME  3000 // 3000 milliseconds
 #define BUTTON_LEFT 0
 #define BUTTON_RIGHT 35
 
 // Player structure
+#define MAX_NAME_LENGTH 4  // Including null terminator
 struct Player {
-  String name;
+  char name[MAX_NAME_LENGTH];
   uint8_t macAddr[6]; // Unique identifier
   int team; // 0 or 1
   bool ready;
 };
 
-#define MAX_PLAYERS 10
-Player players[MAX_PLAYERS];
-// Player *players = (Player *) malloc(4 * sizeof(Player));
-int numPlayers = 0;
+// Room number
+int localRoomNumber = 0;  // Initialize with default room number
+uint8_t zeroArr[6] = {0}; // null array for comparison purposes
+
+#define MAX_PLAYERS 4
+// Zero-initialize the array
+// Done this way instead of {} to be able to test
+// placeholder player information for teamScreen handling
+Player players[MAX_PLAYERS] = {
+                              {{}, {}, 0, 0}, 
+                              {{}, {}, 0, 0}, 
+                              {{}, {}, 0, 0},
+                              {{}, {}, 0, 0}
+                              };
+
+// players[1].name = {'B', 'O', 'B'};
+// players[1].macAddr = {1, 2, 3, 4, 5, 6};
+// players[1].team = 0;
+// players[1].ready = 0;
+
+int numPlayers = 1; // Start with 1 because of localPlayer
 
 // Local player information
 Player localPlayer;
@@ -48,12 +68,11 @@ enum ScreenState {
 ScreenState currentScreen = NAME_SCREEN;
 
 // Name Entry Variables
-String userName = "___";          
-int currentLetterIndex = 0;         
 char selectedLetters[3] = {'A', 'A', 'A'}; // Array to store the selected letters
+int currentLetterIndex = 0;         
 
 // Room Selection Variables
-int room[4] = {0, 0, 0, 0};
+int roomDigits[4] = {0, 0, 0, 0};
 int curr_highlight = 0;
 
 // Button states
@@ -63,16 +82,15 @@ unsigned long pressedTime  = 0;
 unsigned long releasedTime = 0;
 
 // Team Screen Variables
-int selectedPlayerIndex = 0; // Index in players[]
-
 #define TEAM_A_COLOR TFT_BLUE
 #define TEAM_B_COLOR TFT_PURPLE
 
 // Function prototypes
 void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength);
-void sendPlayerInfo();
+void sendJoinRequest();
 void sendPlayerUpdate();
-void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, int dataLen);
+void sendLeaveUpdate();
+void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int dataLen);
 void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status);
 void broadcast(const String &message);
 void espnowSetup();
@@ -85,39 +103,53 @@ void handleRoomEntry();
 void drawTeamScreen();
 void handleTeamScreen();
 void updateLocalPlayerInPlayersArray();
+void clearPlayersArray();
 void setup();
 void loop();
+void sendFullPlayerList(const uint8_t *recipientMac);
+void drawWinScreen();
+void handleWinScreen();
 
 // Implementations
 void formatMacAddress(const uint8_t *macAddr, char *buffer, int maxLength) {
   snprintf(buffer, maxLength, "%02X%02X%02X%02X%02X%02X",
            macAddr[0], macAddr[1], macAddr[2],
            macAddr[3], macAddr[4], macAddr[5]);
+  return;
 }
 
-void sendPlayerInfo() {
-  // Prepare the JOIN message
+void sendJoinRequest() {
+  // Prepare the JOIN_REQUEST message
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  String message = "JOIN:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
-  broadcast(message);
+  char message[100];
+  snprintf(message, sizeof(message), "JOIN_REQUEST:%d:%s:%s:%d:%d",
+           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready);
+  broadcast(String(message));
+  return;
 }
 
 void sendPlayerUpdate() {
   // Prepare the UPDATE message
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  String message = "UPDATE:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
-  broadcast(message);
+  char message[100];
+  snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
+           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready);
+  broadcast(String(message));
+  return;
 }
 
 void sendLeaveUpdate() {
   // Prepare the LEAVE message
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  String message = "LEAVE:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
-  broadcast(message);
-  // Initialize ESP-NOW
+  char message[100];
+  snprintf(message, sizeof(message), "LEAVE:%d:%s:%s:%d:%d",
+           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready);
+  broadcast(String(message));
+
+  // Deinitialize ESP-NOW
   if (esp_now_deinit() == ESP_OK) {
     Serial.println("ESP-NOW Deinit Success");
   } else {
@@ -125,124 +157,175 @@ void sendLeaveUpdate() {
     delay(3000);
     ESP.restart();
   }
-
+  return;
 }
 
-void receiveCallback(const esp_now_recv_info_t *macAddr, const uint8_t *data, int dataLen) {
-  // Only allow a maximum of 250 characters in the message + a null terminating byte
-  char buffer[ESP_NOW_MAX_DATA_LEN + 1];
-  int msgLen = min(ESP_NOW_MAX_DATA_LEN, dataLen);
-  strncpy(buffer, (const char *)data, msgLen);
+void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int dataLen) {
+  if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+    char buffer[ESP_NOW_MAX_DATA_LEN + 1];
+    int msgLen = min(ESP_NOW_MAX_DATA_LEN, dataLen);
+    strncpy(buffer, (const char *)data, msgLen);
+    buffer[msgLen] = 0;
+    String recvd = String(buffer);
+    Serial.println("Received message: " + recvd);
 
-  // Make sure we are null terminated
-  buffer[msgLen] = 0;
-  String recvd = String(buffer);
-  Serial.println("Received message: " + recvd);
 
-  // Parse the message
-  if (recvd.startsWith("JOIN:") || recvd.startsWith("UPDATE:")) {
-    bool isJoin = recvd.startsWith("JOIN:");
-    recvd.remove(0, isJoin ? 5 : 7);
+    // Serial.println("Checking message type");
+    // Parse the message
     int idx1 = recvd.indexOf(':');
+    if (idx1 == -1) return;
+    String messageType = recvd.substring(0, idx1);
+    recvd.remove(0, idx1 + 1);
+
+    // Serial.println("Checking room num");
+    // Extract room number
+    idx1 = recvd.indexOf(':');
+    if (idx1 == -1) return;
+    String roomStr = recvd.substring(0, idx1);
+    int messageRoomNumber = roomStr.toInt();
+    if (messageRoomNumber != localRoomNumber) {
+      // Ignore messages from other rooms
+      return;
+    }
+    recvd.remove(0, idx1 + 1);
+
+    // Serial.println("Checking player info");
+    // Parse player info
+    idx1 = recvd.indexOf(':');
     int idx2 = recvd.indexOf(':', idx1 + 1);
     int idx3 = recvd.indexOf(':', idx2 + 1);
+    // int idx4 = recvd.indexOf(':', idx3 + 1);
 
+    // if (idx1 == -1 || idx2 == -1 || idx3 == -1 || idx4 == -1) return;
+    if (idx1 == -1 || idx2 == -1 || idx3 == -1) return;
     String macStr = recvd.substring(0, idx1);
-    String name = recvd.substring(idx1 + 1, idx2);
+    String nameStr = recvd.substring(idx1 + 1, idx2);
     int team = recvd.substring(idx2 + 1, idx3).toInt();
-    bool ready = recvd.substring(idx3 + 1).toInt();
+    bool ready = recvd.substring(idx3 + 1, recvd.length()).toInt();
+
+    // Serial.println("Printing Mac Address: ");
+    Serial.println(macStr);
     // Convert MAC string back to uint8_t[6]
     uint8_t mac[6];
-    sscanf(macStr.c_str(), "%02X%02X%02X%02X%02X%02X",
-           &mac[0], &mac[1], &mac[2],
-           &mac[3], &mac[4], &mac[5]);
-
-    // Check if player already exists
-    bool playerExists = false;
-    for (int i = 0; i < numPlayers; i++) {
-      if (memcmp(players[i].macAddr, mac, 6) == 0) {
-        // Update player info
-        players[i].name = name;
-        players[i].team = team;
-        players[i].ready = ready;
-        playerExists = true;
-        break;
-      }
+    for (int i = 0; i < 6; i++) {
+      mac[i] = (uint8_t) strtol(macStr.c_str() + (i * 3), NULL, 16);  // 3 to skip colon
     }
 
-    bool newPlayerJoined = false;
-    if (!playerExists && numPlayers < MAX_PLAYERS) {
-      // fits player into the first available spot in the players
-      // list
-      for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (memcmp(players[i].macAddr, "\0\0\0\0\0\0", 6) == 0) {
-          // memcpy(players[numPlayers].macAddr, mac, 6);
-          // players[numPlayers].name = name;
-          // players[numPlayers].team = team;
-          // players[numPlayers].ready = ready;
-          memcpy(players[i].macAddr, mac, 6);
-          players[i].name = name;
-          players[i].team = team;
-          players[i].ready = ready;
-          numPlayers++;
-          newPlayerJoined = true;
+    if (messageType == "JOIN_REQUEST") {
+
+      // Check if player already exists
+      bool playerExists = false;
+      for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (memcmp(players[i].macAddr, mac, 6) == 0) {
+          playerExists = true;
           break;
         }
       }
-    }
 
-    // Redraw team screen if necessary
-    if (currentScreen == TEAM_SCREEN) {
-      drawTeamScreen();
-    }
-
-    // If received JOIN message, send back our player info
-    if (isJoin && newPlayerJoined) {
-      sendPlayerInfo();
-    }
-  } else if (recvd.startsWith("LEAVE:")) {
-    // bool isLeave = recvd.startsWith("LEAVE:");
-    recvd.remove(0, 6);
-    int idx1 = recvd.indexOf(':');
-    int idx2 = recvd.indexOf(':', idx1 + 1);
-    int idx3 = recvd.indexOf(':', idx2 + 1);
-
-    String macStr = recvd.substring(0, idx1);
-    String name = recvd.substring(idx1 + 1, idx2);
-    int team = recvd.substring(idx2 + 1, idx3).toInt();
-    bool ready = recvd.substring(idx3 + 1).toInt();
-
-    // Convert MAC string back to uint8_t[6]
-    uint8_t mac[6];
-    sscanf(macStr.c_str(), "%02X%02X%02X%02X%02X%02X",
-           &mac[0], &mac[1], &mac[2],
-           &mac[3], &mac[4], &mac[5]);
-
-    
-    // Check if player already exists
-    for (int i = 0; i < numPlayers; i++) {
-      if (memcmp(players[i].macAddr, mac, 6) == 0) {
-        // Player info cleared out
-        memset(&players[i], 0, sizeof(players[i]));
-        numPlayers--;
-        break;
+      bool newPlayerJoined = false;
+      if (!playerExists && numPlayers < MAX_PLAYERS) {
+        // Add new player at the end of the array
+        int selectTeamSlot = numPlayers;
+        while(true){
+          if (memcmp(players[selectTeamSlot].macAddr, zeroArr, 6) == 0) {
+            strncpy(players[selectTeamSlot].name, nameStr.c_str(), MAX_NAME_LENGTH - 1);
+            players[selectTeamSlot].name[MAX_NAME_LENGTH - 1] = '\0'; // Ensure null termination
+            memcpy(players[selectTeamSlot].macAddr, mac, 6);
+            players[selectTeamSlot].team = team;
+            players[selectTeamSlot].ready = ready;
+            numPlayers++;
+            // Serial.println("Added new player!");
+            newPlayerJoined = true;
+            break;
+          }
+          selectTeamSlot = (selectTeamSlot + 1) % (MAX_PLAYERS - 1) + 1; // +1 to skip index 0
+        }
       }
+
+
+      // Send our player info to the new player, if they
+      // are accepted in the room
+      if (newPlayerJoined) 
+        sendFullPlayerList(info->src_addr);
+
+      // Redraw team screen if necessary
+      if (currentScreen == TEAM_SCREEN) {
+        drawTeamScreen();
+      }
+
+    } else if (messageType == "UPDATE") {
+
+      // Check if player already exists
+      bool playerExists = false;
+      for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (memcmp(players[i].macAddr, mac, 6) == 0) {
+          // Update player info
+          strncpy(players[i].name, nameStr.c_str(), MAX_NAME_LENGTH - 1);
+          players[i].name[MAX_NAME_LENGTH - 1] = '\0'; // Ensure null termination
+          players[i].team = team;
+          players[i].ready = ready;
+          playerExists = true;
+          break;
+        }
+      }
+
+      if (!playerExists && numPlayers < MAX_PLAYERS) {
+        // Add new player at the end of the array
+        int selectTeamSlot = numPlayers;
+        while(true){
+          if (memcmp(players[selectTeamSlot].macAddr, zeroArr, 6) == 0) {
+            strncpy(players[selectTeamSlot].name, nameStr.c_str(), MAX_NAME_LENGTH - 1);
+            players[selectTeamSlot].name[MAX_NAME_LENGTH - 1] = '\0'; // Ensure null termination
+            memcpy(players[selectTeamSlot].macAddr, mac, 6);
+            players[selectTeamSlot].team = team;
+            players[selectTeamSlot].ready = ready;
+            numPlayers++;
+            break;
+          }
+          selectTeamSlot = (selectTeamSlot + 1) % (MAX_PLAYERS - 1) + 1; // +1 to skip index 0
+        }
+      }
+
+      // Redraw team screen if necessary
+      if (currentScreen == TEAM_SCREEN) {
+        drawTeamScreen();
+      }
+
+    } else if (messageType == "LEAVE") {
+
+      // Remove player from array
+      for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (memcmp(players[i].macAddr, mac, 6) == 0) {
+          // players[i] = players[numPlayers - 1]; // Move last player to this spot
+          memset(&players[i], 0, sizeof(Player));
+          numPlayers--;
+          break;
+        }
+      }
+
+      // Redraw team screen if necessary
+      if (currentScreen == TEAM_SCREEN) {
+        drawTeamScreen();
+      }
+
+    } else if (messageType == "START") {
+      // Move to game screen
+      currentScreen = GAME_SCREEN;
+      tft.fillScreen(TFT_BLACK);
     }
-  } else if (recvd.startsWith("START")) {
-    // Move to game screen
-    currentScreen = GAME_SCREEN;
-    tft.fillScreen(TFT_BLACK);
+    xSemaphoreGive(mutex);
   }
+  delay(100);
+  return;
 }
 
 void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status) {
-  // Debug print
-  // char macStr[18];
-  // formatMacAddress(macAddr, macStr, 18);
-  // Serial.print("Last Packet Sent to: ");
-  // Serial.println(macStr);
-  // Serial.print("Last Packet Send Status: ");
-  // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+  // Optional: Handle send status
+  // if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+  //   xSemaphoreGive(mutex);
+  // }
+  // delay(100);
+  return;
 }
 
 void broadcast(const String &message) {
@@ -255,6 +338,8 @@ void broadcast(const String &message) {
   }
   // Send message
   esp_now_send(broadcastAddress, (const uint8_t *)message.c_str(), message.length());
+  delay(50);
+  return;
 }
 
 void espnowSetup() {
@@ -265,27 +350,15 @@ void espnowSetup() {
   Serial.println("ESP-NOW Broadcast Demo");
 
   // Get local MAC address
-  // Print MAC address
-  // Serial.print("MAC Address: ");
-  // Serial.println(WiFi.macAddress());
-
   WiFi.macAddress(localPlayer.macAddr);
-  // esp_read_mac(localPlayer.macAddr, ESP_IF_WIFI_STA);
-  // esp_err_t ret = esp_read_mac(localPlayer.macAddr, WIFI_IF_STA);
-  // if (ret == ESP_OK) {
-    // Print MAC address
-  Serial.print("Local Player Mac Address: ");
-  Serial.printf("%02x:%02x:%02x:%02x:%02x:%02x\n",
-                localPlayer.macAddr[0], 
-                localPlayer.macAddr[1], 
-                localPlayer.macAddr[2],
-                localPlayer.macAddr[3], 
-                localPlayer.macAddr[4], 
-                localPlayer.macAddr[5]);
-  // } else {
-  //   Serial.println("Failed to read MAC address");
-  //   ESP.restart();
-  // }
+  // Serial.print("Local Player Mac Address: ");
+  // Serial.printf("%02x:%02x:%02x:%02x:%02x:%02x\n",
+  //               localPlayer.macAddr[0], 
+  //               localPlayer.macAddr[1], 
+  //               localPlayer.macAddr[2],
+  //               localPlayer.macAddr[3], 
+  //               localPlayer.macAddr[4], 
+  //               localPlayer.macAddr[5]);
 
   // Disconnect from WiFi
   WiFi.disconnect();
@@ -317,13 +390,24 @@ void textSetup() {
 
 void setup() {
   Serial.begin(115200);
+  delay(1000); // to let esp32 connect properly
   textSetup();
   buttonSetup();
-  // espnowSetup();
-  // drawNameEntryScreen(); 
+  // Initialize localPlayer
+  memset(&localPlayer, 0, sizeof(Player));
+
+  mutex = xSemaphoreCreateMutex();
+
+  if (mutex == NULL) {
+    Serial.println("Mutex creation failed!");
+  }
+
+  // localPlayer will be added to players[0] in updateLocalPlayerInPlayersArray()
+  return;
 }
 
 void drawNameEntryScreen() {
+  tft.fillScreen(TFT_BLACK);
   tft.setTextSize(2);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.drawString("Enter", tft.width()/4+7, 30, 2);
@@ -337,11 +421,12 @@ void drawNameEntryScreen() {
     }
     tft.drawChar(selectedLetters[i], 35 + i * 30, 130, 2);
   }
+  return;
 }
 
 void handleNameEntry() {
-  static String lastName = ""; // track the last drawn name to avoid redundant updates
   static int lastLetterIndex = -1;
+  static char lastLetters[3] = {'\0', '\0', '\0'};
 
   int currentLeftState = digitalRead(BUTTON_LEFT);
 
@@ -375,9 +460,10 @@ void handleNameEntry() {
 
     if ( pressDuration > LONG_PRESS_TIME ){
       // Finalize name and proceed to room selection
-      String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
-      userName = newName;
-      localPlayer.name = userName;
+      for (int i = 0; i < 3; i++) {
+        localPlayer.name[i] = selectedLetters[i];
+      }
+      localPlayer.name[3] = '\0'; // Null-terminate
       localPlayer.team = 0; // Default team
       localPlayer.ready = false;
       currentScreen = ROOM_SCREEN;
@@ -388,17 +474,17 @@ void handleNameEntry() {
   }
   lastRightState = currentRightState;   
 
-  // update the userName and redraw if name or current letter index changes
-  String newName = String(selectedLetters[0]) + String(selectedLetters[1]) + String(selectedLetters[2]);
-  if (newName != lastName || currentLetterIndex != lastLetterIndex) {
-      // drawNameEntryScreen();
-      lastName = newName;
-      lastLetterIndex = currentLetterIndex;
+  // Redraw only if changes occurred
+  if (currentLetterIndex != lastLetterIndex || memcmp(selectedLetters, lastLetters, 3) != 0) {
+    drawNameEntryScreen();
+    lastLetterIndex = currentLetterIndex;
+    memcpy(lastLetters, selectedLetters, 3);
   }
-  drawNameEntryScreen();
+  return;
 }
 
 void drawRoomScreen() {
+  // tft.fillScreen(TFT_BLACK);
   tft.drawString("Room Num", tft.width()/4 - 20, 30, 2);
 
   // Room Screen UI
@@ -409,9 +495,10 @@ void drawRoomScreen() {
     else {
       tft.setTextColor(TFT_GREEN, TFT_BLACK);
     }
-    tft.drawChar(char(room[i] + '0'), 30 + i * 20, tft.height()/2, 2);
+    tft.drawChar(char(roomDigits[i] + '0'), 30 + i * 20, tft.height()/2, 2);
   }
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  return;
 }
 
 void handleRoomEntry() {
@@ -425,7 +512,7 @@ void handleRoomEntry() {
     long pressDuration = releasedTime - pressedTime;
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
-      room[curr_highlight] = (room[curr_highlight] + 1) % 10;
+      roomDigits[curr_highlight] = (roomDigits[curr_highlight] + 1) % 10;
     }
 
     if ( pressDuration > LONG_PRESS_TIME ){
@@ -449,9 +536,12 @@ void handleRoomEntry() {
 
     if ( pressDuration < SHORT_PRESS_TIME ) {
       curr_highlight = (curr_highlight + 1) % 4;
+      // tft.fillScreen(TFT_BLACK);
     }
 
     if ( pressDuration > LONG_PRESS_TIME ){
+      // Set local room number
+      localRoomNumber = roomDigits[0]*1000 + roomDigits[1]*100 + roomDigits[2]*10 + roomDigits[3];
       tft.fillScreen(TFT_BLACK);
 
       currentScreen = TEAM_SCREEN;
@@ -460,8 +550,8 @@ void handleRoomEntry() {
       // **Add local player to players array**
       updateLocalPlayerInPlayersArray();
 
-      // Send initial player info
-      sendPlayerInfo();
+      // Send initial join request
+      sendJoinRequest();
       lastRightState = currentRightState;
       drawTeamScreen();
       return;
@@ -469,52 +559,19 @@ void handleRoomEntry() {
   }
   lastRightState = currentRightState;
   drawRoomScreen();
+  return;
 }
 
 void updateLocalPlayerInPlayersArray() {
-  bool playerExists = false;
-  for (int i = 0; i < numPlayers; i++) {
-    if (memcmp(players[i].macAddr, localPlayer.macAddr, 6) == 0) {
-      // Update player info
-      players[i].name = localPlayer.name;
-      players[i].team = localPlayer.team;
-      players[i].ready = localPlayer.ready;
-      playerExists = true;
-      break;
-    }
-  }
-  if (!playerExists && numPlayers < MAX_PLAYERS) {
-    // Add new player
-    memcpy(players[numPlayers].macAddr, localPlayer.macAddr, 6);
-    players[numPlayers].name = localPlayer.name;
-    players[numPlayers].team = localPlayer.team;
-    players[numPlayers].ready = localPlayer.ready;
-    numPlayers++;
-  }
-  // if (!playerExists && numPlayers < MAX_PLAYERS) {
-  //     // fits player into the first available spot in the players
-  //     // list
-  //   for (int i = 0; i < MAX_PLAYERS; i++) {
-  //     if (memcmp(players[i].macAddr, NULL, 6) == 0) {
-  //       // memcpy(players[numPlayers].macAddr, mac, 6);
-  //       // players[numPlayers].name = name;
-  //       // players[numPlayers].team = team;
-  //       // players[numPlayers].ready = ready;
-  //       memcpy(players[i].macAddr, localPlayer, 6);
-  //       players[i].name = name;
-  //       players[i].team = team;
-  //       players[i].ready = ready;
-  //       numPlayers++;
-  //       break;
-  //     }
-  //   }
-  // }
+  // Since localPlayer is always at index 0
+  players[0] = localPlayer;
 }
 
-void clearLocalPlayerInPlayersArray() {
-  for (int i = 0; i < numPlayers; i++) {
-    memset(&players[i], 0, sizeof(players[i]));
-    numPlayers--;
+void clearPlayersArray() {
+  // Clear all players except localPlayer
+  numPlayers = 1;
+  for (int i = numPlayers; i < MAX_PLAYERS; i++) {
+    memset(&players[i], 0, sizeof(Player));
   }
 }
 
@@ -531,58 +588,38 @@ void drawTeamScreen() {
   tft.setTextSize(2);
   tft.drawString("Team B", 20, 120);
 
-  // Draw players in Team A
+  // Draw players
   int teamAPosition = 50; // Vertical position for Team A names
-  int teamACount = 0;
-  int teamBCount = 0;
-  for (int i = 0; i < numPlayers; i++) {
-    if (players[i].team == 0) { // Team A
-      tft.setTextColor(TEAM_A_COLOR, TFT_BLACK);
-      tft.drawString(players[i].name, 20, teamAPosition);
-
-      // Draw readiness indicator after the name
-      if (players[i].ready) {
-        int nameWidth = tft.textWidth(players[i].name, 2); // Calculate the width of the name
-        tft.drawString(".", 20 + nameWidth + 5, teamAPosition);
-      }
-
-      teamAPosition += 30; // Increment position for Team A
-      teamACount++;
-    }
-  }
-
-  // Draw players in Team B
   int teamBPosition = 150; // Vertical position for Team B names
-  for (int i = 0; i < numPlayers; i++) {
-    if (players[i].team == 1) { // Team B
-      tft.setTextColor(TEAM_B_COLOR, TFT_BLACK);
-      tft.drawString(players[i].name, 20, teamBPosition);
-
-      // Draw readiness indicator after the name
-      if (players[i].ready) {
-        int nameWidth = tft.textWidth(players[i].name, 2); // Calculate the width of the name
-        tft.drawString(".", 20 + nameWidth + 5, teamBPosition);
-      }
-
-      teamBPosition += 30; // Increment position for Team B
-      teamBCount++;
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    // if looking at null array, move to the next one
+    if (memcmp(players[i].macAddr, zeroArr, 6) == 0) {
+      continue;
     }
-  }
 
-  // Highlight the local player
-  for (int i = 0; i < numPlayers; i++) {
     if (memcmp(players[i].macAddr, localPlayer.macAddr, 6) == 0) {
+      // Highlight the local player
       tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      int position;
-      if (players[i].team == 0) {
-        position = 50 + 30 * i;
-      } else {
-        position = 150 + 30 * i;
-      }
-      tft.drawString(">", 5, position);
-      break;
+    } else {
+      tft.setTextColor(players[i].team == 0 ? TEAM_A_COLOR : TEAM_B_COLOR, TFT_BLACK);
+    }
+
+    int positionY = players[i].team == 0 ? teamAPosition : teamBPosition;
+    tft.drawString(players[i].name, 30, positionY);
+
+    // Draw readiness indicator after the name
+    if (players[i].ready) {
+      int nameWidth = tft.textWidth(players[i].name, 2); // Calculate the width of the name
+      tft.drawString(".", 30 + nameWidth + 5, positionY);
+    }
+
+    if (players[i].team == 0) {
+      teamAPosition += 20;
+    } else {
+      teamBPosition += 20;
     }
   }
+  return;
 }
 
 void handleTeamScreen() {
@@ -605,16 +642,17 @@ void handleTeamScreen() {
       // Toggle the team for the local player
       localPlayer.team = 1 - localPlayer.team;
 
-      // **Update local player in players array**
+      // Update local player in players array
       updateLocalPlayerInPlayersArray();
 
       sendPlayerUpdate(); // Broadcast the change
       drawTeamScreen(); // Redraw the screen with updated teams
-    } else if (pressDuration < LONG_PRESS_TIME) {
+    } else if (pressDuration > LONG_PRESS_TIME) {
       currentScreen = ROOM_SCREEN;
       tft.fillScreen(TFT_BLACK);
       sendLeaveUpdate();
-      clearLocalPlayerInPlayersArray();
+      clearPlayersArray();
+      lastLeftState = currentLeftState;
     }
   }
   lastLeftState = currentLeftState;
@@ -630,7 +668,7 @@ void handleTeamScreen() {
       // Toggle readiness for the local player
       localPlayer.ready = !localPlayer.ready; // Toggle readiness
 
-      // **Update local player in players array**
+      // Update local player in players array
       updateLocalPlayerInPlayersArray();
 
       sendPlayerUpdate(); // Broadcast the change
@@ -641,17 +679,19 @@ void handleTeamScreen() {
       int teamBCount = 0;
       int teamAReady = 0;
       int teamBReady = 0;
-      for (int i = 0; i < numPlayers; i++) {
-        if (players[i].team == 0) {
-          teamACount++;
-          if (players[i].ready) teamAReady++;
-        } else {
-          teamBCount++;
-          if (players[i].ready) teamBReady++;
+      for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
+          if (players[i].team == 0) {
+            teamACount++;
+            if (players[i].ready) teamAReady++;
+          } else {
+            teamBCount++;
+            if (players[i].ready) teamBReady++;
+          }
         }
       }
 
-      // Check if both teams have at least 2 ready players
+      // Check if both teams have at least 1 ready player
       if (teamACount >= 2 && teamAReady >= 2 && teamBCount >= 2 && teamBReady >= 2) {
         // Proceed to game screen
         currentScreen = GAME_SCREEN;
@@ -666,9 +706,26 @@ void handleTeamScreen() {
     }
   }
   lastRightState = currentRightState;
+  return;
 }
 
-void handleWinScreen(){
+void sendFullPlayerList(const uint8_t *recipientMac) {
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    // send player list not including the recipient & empty players
+    if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
+      char macStr[13];
+      formatMacAddress(players[i].macAddr, macStr, 13);
+      char message[100];
+      snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
+              localRoomNumber, macStr, players[i].name, players[i].team, players[i].ready);
+      esp_now_send(recipientMac, (const uint8_t *)message, strlen(message));
+      delay(50); // add small delay between sending each msg
+    }
+  }
+  return;
+}
+
+void handleWinScreen() {
   int currentLeftState = digitalRead(BUTTON_LEFT); // rematch
   int currentRightState = digitalRead(BUTTON_RIGHT); // quit
 
@@ -680,7 +737,7 @@ void handleWinScreen(){
     updateLocalPlayerInPlayersArray();
 
     // Send initial player info
-    sendPlayerInfo();
+    sendPlayerUpdate();
     drawTeamScreen();
     return;
   }
@@ -689,15 +746,14 @@ void handleWinScreen(){
     tft.fillScreen(TFT_BLACK);
     currentScreen = NAME_SCREEN;
     sendLeaveUpdate();
-    clearLocalPlayerInPlayersArray();
-    // call drawteamScreen function?
+    clearPlayersArray();
     return;
   }
   drawWinScreen();
+  return;
 }
 
-void drawWinScreen(){
-  // variable for teamScreen to display winner name
+void drawWinScreen() {
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.setTextSize(3); // Set a larger font for emphasis
 
@@ -709,11 +765,6 @@ void drawWinScreen(){
   String teamWinsLine2 = "WINS!";
   x1 = (tft.width() - tft.textWidth(teamWinsLine2, 2)) / 2;
   tft.drawString(teamWinsLine2, x1, 80, 2);
-  /*
-  String teamWins = "Team _ Wins";
-  int16_t x1 = (tft.width() - tft.textWidth(teamWins, 2)) / 2; // Center horizontally
-  tft.drawString(teamWins, x1, 30, 2);
-  */
 
   tft.setTextSize(2); // Set a larger font for emphasis
   String rematch = "Rematch?";
@@ -723,44 +774,29 @@ void drawWinScreen(){
   String quit = "Quit?";
   x1 = (tft.width() - tft.textWidth(quit, 2)) / 2; // Center horizontally
   tft.drawString(quit, x1, 170, 2);
+  return;
 }
 
-// String genCommand() {
-//   String verb = commandVerbs[random(ARRAY_SIZE)];
-//   String noun1 = commandNounsFirst[random(ARRAY_SIZE)];
-//   String noun2 = commandNounsSecond[random(ARRAY_SIZE)];
-//   return verb + " " + noun1 + noun2;
-// }
-
-// void drawControls() {
-
-//   cmd1 = genCommand();
-//   cmd2 = genCommand();
-//   cmd1.indexOf(' ');
-//   tft.drawString("B1: " + cmd1.substring(0, cmd1.indexOf(' ')), 0, 90, 2);
-//   tft.drawString(cmd1.substring(cmd1.indexOf(' ') + 1), 0, 90 + lineHeight, 2);
-//   tft.drawString("B2: " + cmd2.substring(0, cmd2.indexOf(' ')), 0, 170, 2);
-//   tft.drawString(cmd2.substring(cmd2.indexOf(' ') + 1), 0, 170 + lineHeight, 2);
-
-// }
-
 void loop() {
-  switch (currentScreen) {
-    case NAME_SCREEN:
-      handleNameEntry();
-      break;
-    case ROOM_SCREEN:
-      handleRoomEntry();
-      break;
-    case TEAM_SCREEN:
-      handleTeamScreen();
-      break;
-    case GAME_SCREEN:
-      // Game logic here
-      break;
-    case END_SCREEN:
-      handleWinScreen();
-      // End screen logic here
-      break;
+  if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+    switch (currentScreen) {
+      case NAME_SCREEN:
+        handleNameEntry();
+        break;
+      case ROOM_SCREEN:
+        handleRoomEntry();
+        break;
+      case TEAM_SCREEN:
+        handleTeamScreen();
+        break;
+      case GAME_SCREEN:
+        // Game logic here
+        break;
+      case END_SCREEN:
+        handleWinScreen();
+        break;
+    }
+    xSemaphoreGive(mutex);
   }
+  delay(100);
 }
