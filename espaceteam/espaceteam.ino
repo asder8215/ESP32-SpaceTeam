@@ -107,6 +107,7 @@ void clearPlayersArray();
 void setup();
 void loop();
 void sendFullPlayerList(const uint8_t *recipientMac);
+void sendPlayerInfo();
 void drawWinScreen();
 void handleWinScreen();
 
@@ -245,8 +246,10 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
 
       // Send our player info to the new player, if they
       // are accepted in the room
-      if (newPlayerJoined) 
-        sendFullPlayerList(info->src_addr);
+      if (newPlayerJoined) {
+        // sendFullPlayerList(info->src_addr);
+        sendPlayerInfo();
+      }
 
       // Redraw team screen if necessary
       if (currentScreen == TEAM_SCREEN) {
@@ -709,20 +712,28 @@ void handleTeamScreen() {
   return;
 }
 
-void sendFullPlayerList(const uint8_t *recipientMac) {
-  for (int i = 0; i < MAX_PLAYERS; i++) {
-    // send player list not including the recipient & empty players
-    if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
-      char macStr[13];
-      formatMacAddress(players[i].macAddr, macStr, 13);
-      char message[100];
-      snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
-              localRoomNumber, macStr, players[i].name, players[i].team, players[i].ready);
-      esp_now_send(recipientMac, (const uint8_t *)message, strlen(message));
-      delay(50); // add small delay between sending each msg
-    }
-  }
-  return;
+// void sendFullPlayerList(const uint8_t *recipientMac) {
+//   for (int i = 0; i < MAX_PLAYERS; i++) {
+//     // send player list not including the recipient & empty players
+//     if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
+//       char macStr[13];
+//       formatMacAddress(players[i].macAddr, macStr, 13);
+//       char message[100];
+//       snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
+//               localRoomNumber, macStr, players[i].name, players[i].team, players[i].ready);
+//       esp_now_send(recipientMac, (const uint8_t *)message, strlen(message));
+//       delay(50); // add small delay between sending each msg
+//     }
+//   }
+//   return;
+// }
+
+void sendPlayerInfo() {
+  // Prepare the JOIN message
+  char macStr[13];
+  formatMacAddress(localPlayer.macAddr, macStr, 13);
+  String message = "JOIN:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
+  broadcast(message);
 }
 
 void handleWinScreen() {
