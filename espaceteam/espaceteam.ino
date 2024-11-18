@@ -14,7 +14,7 @@
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 
-SemaphoreHandle_t mutex;  // Declare a mutex handle
+// SemaphoreHandle_t mutex;  // Declare a mutex handle
 
 // Constants
 #define SHORT_PRESS_TIME 500  // 500 milliseconds
@@ -399,11 +399,11 @@ void setup() {
   // Initialize localPlayer
   memset(&localPlayer, 0, sizeof(Player));
 
-  mutex = xSemaphoreCreateMutex();
+  // mutex = xSemaphoreCreateMutex();
 
-  if (mutex == NULL) {
-    Serial.println("Mutex creation failed!");
-  }
+  // if (mutex == NULL) {
+  //   Serial.println("Mutex creation failed!");
+  // }
 
   // localPlayer will be added to players[0] in updateLocalPlayerInPlayersArray()
   return;
