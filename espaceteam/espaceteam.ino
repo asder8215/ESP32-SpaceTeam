@@ -14,7 +14,7 @@
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 
-// SemaphoreHandle_t mutex;  // Declare a mutex handle
+SemaphoreHandle_t mutex;  // Declare a mutex handle
 
 // Constants
 #define SHORT_PRESS_TIME 500  // 500 milliseconds
@@ -247,8 +247,8 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
       // Send our player info to the new player, if they
       // are accepted in the room
       if (newPlayerJoined) {
-        // sendFullPlayerList(info->src_addr);
-        sendPlayerInfo();
+        sendFullPlayerList(info->src_addr);
+        // sendPlayerInfo();
       }
 
       // Redraw team screen if necessary
@@ -399,11 +399,11 @@ void setup() {
   // Initialize localPlayer
   memset(&localPlayer, 0, sizeof(Player));
 
-  // mutex = xSemaphoreCreateMutex();
+  mutex = xSemaphoreCreateMutex();
 
-  // if (mutex == NULL) {
-  //   Serial.println("Mutex creation failed!");
-  // }
+  if (mutex == NULL) {
+    Serial.println("Mutex creation failed!");
+  }
 
   // localPlayer will be added to players[0] in updateLocalPlayerInPlayersArray()
   return;
@@ -712,29 +712,29 @@ void handleTeamScreen() {
   return;
 }
 
-// void sendFullPlayerList(const uint8_t *recipientMac) {
-//   for (int i = 0; i < MAX_PLAYERS; i++) {
-//     // send player list not including the recipient & empty players
-//     if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
-//       char macStr[13];
-//       formatMacAddress(players[i].macAddr, macStr, 13);
-//       char message[100];
-//       snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
-//               localRoomNumber, macStr, players[i].name, players[i].team, players[i].ready);
-//       esp_now_send(recipientMac, (const uint8_t *)message, strlen(message));
-//       delay(50); // add small delay between sending each msg
-//     }
-//   }
-//   return;
-// }
-
-void sendPlayerInfo() {
-  // Prepare the JOIN message
-  char macStr[13];
-  formatMacAddress(localPlayer.macAddr, macStr, 13);
-  String message = "JOIN:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
-  broadcast(message);
+void sendFullPlayerList(const uint8_t *recipientMac) {
+  for (int i = 0; i < MAX_PLAYERS; i++) {
+    // send player list not including the recipient & empty players
+    if (memcmp(players[i].macAddr, zeroArr, 6) != 0) {
+      char macStr[13];
+      formatMacAddress(players[i].macAddr, macStr, 13);
+      char message[100];
+      snprintf(message, sizeof(message), "UPDATE:%d:%s:%s:%d:%d",
+              localRoomNumber, macStr, players[i].name, players[i].team, players[i].ready);
+      esp_now_send(recipientMac, (const uint8_t *)message, strlen(message));
+      delay(50); // add small delay between sending each msg
+    }
+  }
+  return;
 }
+
+// void sendPlayerInfo() {
+//   // Prepare the JOIN message
+//   char macStr[13];
+//   formatMacAddress(localPlayer.macAddr, macStr, 13);
+//   String message = "JOIN:" + String(macStr) + ":" + localPlayer.name + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready);
+//   broadcast(message);
+// }
 
 void handleWinScreen() {
   int currentLeftState = digitalRead(BUTTON_LEFT); // rematch
@@ -788,8 +788,24 @@ void drawWinScreen() {
   return;
 }
 
+void handleGameScreen(){
+  String teamWinsLine1 = "Lorem";
+  int16_t x1 = (tft.width() - tft.textWidth(teamWinsLine1, 2)) / 2; // Center horizontally
+  tft.drawString(teamWinsLine1, x1, 20, 2);
+
+  // Second part
+  String teamWinsLine2 = "Ipsum";
+  x1 = (tft.width() - tft.textWidth(teamWinsLine2, 2)) / 2;
+  tft.drawString(teamWinsLine2, x1, 80, 2);
+
+  tft.setTextSize(2); // Set a larger font for emphasis
+  String rematch = "Dolor";
+  x1 = (tft.width() - tft.textWidth(rematch, 2)) / 2; // Center horizontally
+  tft.drawString(rematch, x1, 140, 2);
+}
+
 void loop() {
-  // if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
+  if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
     switch (currentScreen) {
       case NAME_SCREEN:
         handleNameEntry();
@@ -802,12 +818,13 @@ void loop() {
         break;
       case GAME_SCREEN:
         // Game logic here
+        handleGameScreen();
         break;
       case END_SCREEN:
         handleWinScreen();
         break;
     }
-  //   xSemaphoreGive(mutex);
-  // }
+    xSemaphoreGive(mutex);
+  }
   delay(50);
 }
