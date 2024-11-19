@@ -42,8 +42,8 @@ uint8_t zeroArr[6] = {0}; // null array for comparison purposes
 Player players[MAX_PLAYERS] = {
                               {{}, {}, 0, 0}, 
                               {{}, {}, 0, 0}, 
-                              {{}, {}, 0, 0},
-                              {{}, {}, 0, 0}
+                              {{'B', 'O', 'B', '\0'}, {1, 2, 3, 4, 5, 6}, 1, 1},
+                              {{'S', 'O', 'B', '\0'}, {7, 8, 9, 10, 11, 12}, 1, 1}
                               };
 
 // Player players[MAX_PLAYERS] = {
@@ -362,6 +362,8 @@ void broadcast(const String &message) {
   return;
 }
 
+
+
 void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int dataLen) {
   if (xSemaphoreTake(mutex, portMAX_DELAY)) {  // Take the mutex
     char buffer[ESP_NOW_MAX_DATA_LEN + 1];
@@ -371,8 +373,6 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
     String recvd = String(buffer);
     Serial.println("Received message: " + recvd);
 
-
-    // Serial.println("Checking message type");
     // Parse the message
     int idx1 = recvd.indexOf(':');
     if (idx1 == -1) {
@@ -383,7 +383,6 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
     String messageType = recvd.substring(0, idx1);
     recvd.remove(0, idx1 + 1);
 
-    // Serial.println("Checking room num");
     // Extract room number
     idx1 = recvd.indexOf(':');
     if (idx1 == -1) {
@@ -401,32 +400,61 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
     }
     recvd.remove(0, idx1 + 1);
 
-    // Serial.println("Checking player info");
-    // Parse player info
+    // Parse macStr
     idx1 = recvd.indexOf(':');
-    int idx2 = recvd.indexOf(':', idx1 + 1);
-    int idx3 = recvd.indexOf(':', idx2 + 1);
-    // int idx4 = recvd.indexOf(':', idx3 + 1);
-
-    // if (idx1 == -1 || idx2 == -1 || idx3 == -1 || idx4 == -1) return;
-    if (idx1 == -1 || idx2 == -1 || idx3 == -1) {
+    if (idx1 == -1) {
       xSemaphoreGive(mutex);
       delay(100);
       return;
     }
     String macStr = recvd.substring(0, idx1);
-    String nameStr = recvd.substring(idx1 + 1, idx2);
-    int team = recvd.substring(idx2 + 1, idx3).toInt();
-    bool ready = recvd.substring(idx3 + 1, recvd.length()).toInt();
+    recvd.remove(0, idx1 + 1);
 
-    // Serial.println("Printing Mac Address: ");
-    Serial.println(macStr);
+    // Parse nameStr
+    idx1 = recvd.indexOf(':');
+    if (idx1 == -1) {
+      xSemaphoreGive(mutex);
+      delay(100);
+      return;
+    }
+    String nameStr = recvd.substring(0, idx1);
+    recvd.remove(0, idx1 + 1);
+
+    // Parse team
+    idx1 = recvd.indexOf(':');
+    if (idx1 == -1) {
+      xSemaphoreGive(mutex);
+      delay(100);
+      return;
+    }
+    String teamStr = recvd.substring(0, idx1);
+    int team = teamStr.toInt();
+    recvd.remove(0, idx1 + 1);
+
+    // Parse ready
+    idx1 = recvd.indexOf(':');
+    String readyStr;
+    if (idx1 == -1) {
+      // No more colons, so ready is the rest of the string
+      readyStr = recvd;
+      recvd = ""; // recvd is empty now
+    } else {
+      readyStr = recvd.substring(0, idx1);
+      recvd.remove(0, idx1 + 1);
+    }
+    bool ready = readyStr.toInt();
+
     // Convert MAC string back to uint8_t[6]
     uint8_t mac[6];
     for (int i = 0; i < 6; i++) {
-      mac[i] = (uint8_t) strtol(macStr.c_str() + (i * 3), NULL, 16);  // 3 to skip colon
+      char byteStr[3];
+      byteStr[0] = macStr[i * 2];
+      byteStr[1] = macStr[i * 2 + 1];
+      byteStr[2] = '\0';
+      mac[i] = (uint8_t) strtol(byteStr, NULL, 16);
     }
 
+    // Now handle the message based on messageType
     if (messageType == "JOIN_REQUEST") {
 
       // Check if player already exists
@@ -472,7 +500,6 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
       }
 
     } else if (messageType == "UPDATE") {
-
       // Check if player already exists
       bool playerExists = false;
       for (int i = 1; i < MAX_PLAYERS; i++) {
@@ -504,7 +531,7 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
         }
       }
 
-      // Redraw team screen if necessary
+          // Redraw team screen if necessary
       if (currentScreen == TEAM_SCREEN) {
         drawTeamScreen();
       }
@@ -534,42 +561,36 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
       attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), sendCmd2, FALLING);
       timerSetup();
       currentScreen = GAME_SCREEN;
+
     } else if (messageType == "ASK") {
       if (cmdRecvd == waitingCmd && random(100) < 30 && team == localPlayer.team) {
-        int idx4 = recvd.indexOf(':', idx3 + 1);
-        String ask = recvd.substring(idx4 + 1, recvd.length());
-        // Check for basic corruption (unprintable characters)
+        String ask = recvd; // recvd contains the ask parameter
+        // Corrected character validation
         for (char c : ask) {
-            if (c == ' '){
-              continue;
-            }
-            // if (!isprint(c) && c != '\n' && c != '\r') {
-            if (!(c >= 'A' && c <= 'Z') || !(c >= 'a' && c <= 'z')) {
-                Serial.println("Message contains invalid characters!");
-                xSemaphoreGive(mutex);
-                delay(100);
-                return;
-            }
+          if (!( (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == ' ' )) {
+            Serial.println("Message contains invalid characters!");
+            xSemaphoreGive(mutex);
+            delay(100);
+            return;
+          }
         }
         cmdRecvd = ask;
         redrawCmdRecvd = true;
         timerStart(askExpireTimer);  //once you get an ask, a timer starts
       }
+
+
     } else if (messageType == "DECIDE") {
       if (team == localPlayer.team) {
-        int idx4 = recvd.indexOf(':', idx3 + 1);
-        String decide = recvd.substring(idx4 + 1, recvd.length());
-        // Check for basic corruption (unprintable characters)
+        String decide = recvd; // recvd contains the decide parameter
+        // Corrected character validation
         for (char c : decide) {
-            if (c == ' '){
-              continue;
-            }
-            if (!(c >= 'A' && c <= 'Z') || !(c >= 'a' && c <= 'z')) {
-                Serial.println("Message contains invalid characters!");
-                xSemaphoreGive(mutex);
-                delay(100);
-                return;
-            }
+          if (!( (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == ' ' )) {
+            Serial.println("Message contains invalid characters!");
+            xSemaphoreGive(mutex);
+            delay(100);
+            return;
+          }
         }
         if (decide == cmdRecvd) {
           timerWrite(askExpireTimer, 0);
@@ -581,22 +602,21 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
         }
       }
     } else if (messageType == "PROGRESS") {
-      int idx4 = recvd.indexOf(':', idx3 + 1);
-      String progressTxt = recvd.substring(idx4 + 1, recvd.length());
+      String progressTxt = recvd; // recvd contains the progress parameter
       // Check for basic corruption (unprintable characters)
       for (char c : progressTxt) {
-          if (!(c >= '0' && c <= '9')) {
-              Serial.println("Message contains invalid characters!");
-              xSemaphoreGive(mutex);
-              delay(100);
-              return;
-          }
+        if (!(c >= '0' && c <= '9')) {
+          Serial.println("Message contains invalid characters!");
+          xSemaphoreGive(mutex);
+          delay(100);
+          return;
+        }
       }
       if (team == localPlayer.team) {
         progress = progressTxt.toInt();
         redrawProgress = true;
       }
-    } else if (messageType == "WIN") {
+} else if (messageType == "WIN") {
       currentScreen = END_SCREEN;
       tft.fillScreen(TFT_BLACK);
       if (team == 0) {
@@ -605,11 +625,14 @@ void receiveCallback(const esp_now_recv_info_t *info, const uint8_t *data, int d
         endScreenState = TEAM_B;
       }
     }
+
+
     xSemaphoreGive(mutex);
   }
   delay(100);
   return;
 }
+
 
 void sentCallback(const uint8_t *macAddr, esp_now_send_status_t status) {
   // Optional: Handle send status
