@@ -271,33 +271,27 @@ void sendAskRequest(const String &ask) {
   // Prepare the ASK request
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  char message[100];
-  snprintf(message, sizeof(message), "ASK:%d:%s:%s:%d:%d:%s",
-           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready, 
-           ask);
-  broadcast(String(message));
+  String message = "ASK:" + String(localRoomNumber) + ":" + String(macStr) + ":" + String(localPlayer.name) + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready) + ":" + ask;
+  Serial.println("Sending ASK message: " + message); // Debugging
+  broadcast(message);
 }
 
 void sendDecideRequest(const String &decide) {
   // Prepare the DECIDE request
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  char message[100];
-  snprintf(message, sizeof(message), "DECIDE:%d:%s:%s:%d:%d:%s",
-           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready,
-           decide);
-  broadcast(String(message));
+  String message = "DECIDE:" + String(localRoomNumber) + ":" + String(macStr) + ":" + String(localPlayer.name) + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready) + ":" + decide;
+  Serial.println("Sending DECIDE message: " + message); // Debugging
+  broadcast(message);
 }
 
 void sendProgressRequest(const String &progress) {
   // Prepare the PROGRESS request
   char macStr[13];
   formatMacAddress(localPlayer.macAddr, macStr, 13);
-  char message[100];
-  snprintf(message, sizeof(message), "PROGRESS:%d:%s:%s:%d:%d:%s",
-           localRoomNumber, macStr, localPlayer.name, localPlayer.team, localPlayer.ready,
-           progress);
-  broadcast(String(message));
+  String message = "PROGRESS:" + String(localRoomNumber) + ":" + String(macStr) + ":" + String(localPlayer.name) + ":" + String(localPlayer.team) + ":" + String(localPlayer.ready) + ":" + progress;
+  Serial.println("Sending PROGRESS message: " + message); // Debugging
+  broadcast(message);
 }
 
 void sendWinRequest() {
@@ -349,6 +343,11 @@ void clearPlayersArray() {
 }
 
 void broadcast(const String &message) {
+  // Check message length
+  if (message.length() > 250) {
+    Serial.println("Error: Message length exceeds ESP-NOW maximum limit.");
+    return;
+  }
   // Broadcast a message to every device in range
   uint8_t broadcastAddress[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
   esp_now_peer_info_t peerInfo = {};
@@ -357,9 +356,13 @@ void broadcast(const String &message) {
     esp_now_add_peer(&peerInfo);
   }
   // Send message
-  esp_now_send(broadcastAddress, (const uint8_t *)message.c_str(), message.length());
+  esp_err_t result = esp_now_send(broadcastAddress, (const uint8_t *)message.c_str(), message.length());
+  if (result == ESP_OK) {
+    Serial.println("Broadcast message sent successfully.");
+  } else {
+    Serial.println("Error sending broadcast message.");
+  }
   delay(150);
-  return;
 }
 
 
