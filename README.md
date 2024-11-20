@@ -4,11 +4,13 @@ Creative Embedded System Module 3 Project: This project uses the TFT_eSPI, WiFi.
 ## Demo
 [![Creative Embedded Module Project 3](http://img.youtube.com/vi/E0GkIxMT4ik/0.jpg)](https://youtu.be/E0GkIxMT4ik)
 
-![Polyscend Nov 18 Demo](PLACEHOLDER.gif)
-
 ## Blog Post
 
-You can take an in depth look at our process making this program in this [blog post](PLACEHOLDER).
+You can take an in depth look at our process making this program in this following blog posts
+- [Mahdi's Blog Post](https://chambray-dragon-de5.notion.site/2v2-ESP32-Spaceteam-144c917d299b8060b59de96814556e25?pvs=73)
+- [Christine's Blog Post](PLACEHOLDER)
+- [Enrista's Blog Post](PLACEHOLDER)
+- [Jie's Blog Post](PLACEHOLDER)
 
 ## Table of Contents
 
@@ -53,7 +55,7 @@ You can take an in depth look at our process making this program in this [blog p
 
 These contain images of our SpaceTeam concept design. Some of these images may not be implemented or changed on how it works/shown in the game as it is currently.
 
-- Initial Screen
+- Name, Room, and Team Screens
 ![Initial Screen](images/initial_screen.jpg)
 - Game Screen
 ![Game Screen](images/game_screen.jpg)
