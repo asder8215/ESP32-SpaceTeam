@@ -2,7 +2,7 @@
 Creative Embedded System Module 3 Project: This project uses the TFT_eSPI, WiFi.h, esp_now.h, and SPI.h libraries with the Lilygo TTGO ESP32 and Arduino IDE to play a 2 vs. 2 SpaceTeam game with your friends.
 
 ## Demo
-[![Creative Embedded Module Project 3](http://img.youtube.com/PLACEHOLDER.jpg)](https://www.youtube.com/PLACEHOLDER)
+[![Creative Embedded Module Project 3](https://youtu.be/E0GkIxMT4ik)
 
 ![Polyscend Nov 18 Demo](PLACEHOLDER.gif)
 
