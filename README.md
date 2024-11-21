@@ -33,12 +33,17 @@ You can take an in depth look at our process making this program in this followi
    ```bash
    git clone https://github.com/asder8215/ESP32-SpaceTeam.git
    ```
-### 2. From the espaceteam folder, import or move the `espaceteam.ino` file into Arduino Folder
-    * If Arduino IDE is not installed, look at this [Arduino Support Page](https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE) on how to install the Arduino IDE.
+### 2. Move the `espaceteam.ino` File
+    
+    From the espaceteam folder, import or move the `espaceteam.ino` file into your Arduino Folder.
+    If Arduino IDE is not installed, look at this [Arduino Support Page](https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE) on how to install the Arduino IDE.
 
-### 3. Follow these [installation steps](https://coms3930.notion.site/Lab-1-TFT-Display-a53b9c10137a4d95b22d301ec6009a94) to correctly set up the libraries needed to write and run code for TTGO ESP32.
+### 3. Set Up the Required Libraries
 
-### 4. Once your Arduino IDE is set up, you can connect your ESP32 to your laptop or computer via USB-C and click on the `Upload` button on the top left of the Arduino IDE. This will make the code compile and store onto the ESP32.
+    Follow these [installation steps](https://coms3930.notion.site/Lab-1-TFT-Display-a53b9c10137a4d95b22d301ec6009a94) to correctly set up the libraries needed to write and run code for TTGO ESP32.
+
+### 4. Upload the Code
+    Once your Arduino IDE is set up, you can connect your ESP32 to your laptop or computer via USB-C and click on the `Upload` button on the top left of the Arduino IDE. This will make the code compile and store onto the ESP32.
 
 ### 5. After Uploading the Code
 
@@ -54,6 +59,7 @@ Once the code is uploaded, the ESP32 will display prompts asking you to use the 
   - **Long press (left button)**: Move back to the name screen.
   - **Short press (right button)**: Confirm the current digit and move to the next digit.
   - **Long press (right button)**: Confirm the room number (four digits long).  
+
     ⚠️ Ensure all players enter the **same room number** to join the same game.
 
 - **Team Selection Screen**:
@@ -62,9 +68,12 @@ Once the code is uploaded, the ESP32 will display prompts asking you to use the 
   - **Short press (right button)**: Toggle the readiness status of the local player.
   - **Long press (right button)**: Attempt to start the game (only if conditions are met).  
 
-⚠️ The game will only start when **both teams have at least two players** and **all players are marked as ready**.
+    ⚠️ The game will only start when **both teams have at least two players** and **all players are marked as ready**.
 
-6. Each player will see one top command and two button commands displayed on their ESP32 screen. Players must shout out their top command, prompting their partner to press the corresponding left or right button if the command matches one of their button commands. The goal is for each team to collaborate internally while competing against the opposing team to reach a score of 10 (each correct command adds +1 to the respective team's score).
+### 6. Start Playing the Game
+
+Each player will see one **top command** and two **button commands** displayed on their ESP32 screen. Players must shout out their top command, prompting their partner to press the corresponding left or right button if the command matches one of their button commands. The goal is for each team to collaborate internally while competing against the opposing team to reach a score of 10 (each correct command adds +1 to the respective team's score).
+
 - **Left Short Press**: Select the player’s **command 1** option and notify the other ESP32 device that this command was chosen.  
 - **Right Short Press**: Select the player’s **command 2** option and notify the other ESP32 device that this command was chosen.
 
