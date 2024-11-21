@@ -35,15 +35,15 @@ You can take an in depth look at our process making this program in this followi
    ```
 ### 2. Move the `espaceteam.ino` File
     
-    From the espaceteam folder, import or move the `espaceteam.ino` file into your Arduino Folder.
-    If Arduino IDE is not installed, look at this [Arduino Support Page](https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE) on how to install the Arduino IDE.
+From the espaceteam folder, import or move the `espaceteam.ino` file into your Arduino Folder.
+If Arduino IDE is not installed, look at this [Arduino Support Page](https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE) on how to install the Arduino IDE.
 
 ### 3. Set Up the Required Libraries
 
-    Follow these [installation steps](https://coms3930.notion.site/Lab-1-TFT-Display-a53b9c10137a4d95b22d301ec6009a94) to correctly set up the libraries needed to write and run code for TTGO ESP32.
+Follow these [installation steps](https://coms3930.notion.site/Lab-1-TFT-Display-a53b9c10137a4d95b22d301ec6009a94) to correctly set up the libraries needed to write and run code for TTGO ESP32.
 
 ### 4. Upload the Code
-    Once your Arduino IDE is set up, you can connect your ESP32 to your laptop or computer via USB-C and click on the `Upload` button on the top left of the Arduino IDE. This will make the code compile and store onto the ESP32.
+Once your Arduino IDE is set up, you can connect your ESP32 to your laptop or computer via USB-C and click on the `Upload` button on the top left of the Arduino IDE. This will make the code compile and store onto the ESP32.
 
 ### 5. After Uploading the Code
 
@@ -84,7 +84,7 @@ The game concludes when one team reaches 10 points first. All players are notifi
 - **Rematch**: Press the **left button** to re-enter the team selection process and set up a new game.  
 - **Exit**: Press the **right button** to leave the current game session and return to the name selection screen.
 
-### 8. If you are unsure of how to play the game or want a quick guide, refer to the demo above to see how it works!
+If you are unsure of how to play the game or want a quick guide, refer to the **demo above** to see how it works!
 
 ## Concept Design
 
