@@ -1,4 +1,4 @@
--# ESP32-SpaceTeam
+# ESP32-SpaceTeam
 Creative Embedded System Module 3 Project: This project uses the TFT_eSPI, WiFi.h, esp_now.h, and SPI.h libraries with the Lilygo TTGO ESP32 and Arduino IDE to play a 2 vs. 2 SpaceTeam game with your friends.
 
 ## Demo
